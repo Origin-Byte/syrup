@@ -33,7 +33,7 @@ One can:
 - set publicly accessible actions to be witness protected
 - open a new BID
 - cancel an existing BID they own
-- offer an NFT if collection matches OB collection
+- offer an NFT if a collection matches OB collection
 - cancel an existing NFT offer
 - instantly buy a specific NFT
 
@@ -43,7 +43,7 @@ The contract which creates the orderbook can restrict specific actions to be
 called only with a witness pattern and not via the entry point function.
 This means others can build contracts on top of the orderbook with their own
 custom logic based on their requirements or they can just use the entry point
-functions which cover other use cases.
+functions that cover other use cases.
 
 If a method is protected, clients will need to call a standard endpoint in the
 witness-owning smart contract instead of the relevant endpoint in the orderbook.
@@ -73,9 +73,9 @@ struct WitnessProtectedActions has store {
 This means that the additional complexity is _(i)_ opt-in by the collection and
 _(ii)_ reserved only to the particular action which warrants that complexity.
 
-To reiterate, a marketplace can list NFTs from collections which have all
+To reiterate, a marketplace can list NFTs from collections that have all
 actions unprotected, ie. no special logic. Or they can just disable that
-particular action which is disabled in the UI.
+particular action that is disabled in the UI.
 
 Additionally, if we created a standard interface for custom implementations of
 the disabled actions, then the added opt-in complexity could be abstracted away
