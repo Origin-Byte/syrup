@@ -81,4 +81,4 @@ Additionally, if we created a standard interface for custom implementations of
 the disabled actions, then the added opt-in complexity could be abstracted away
 from the clients by our SDK.
 
-TBD: Can this be misused by removing the option to cancel an ask/bin?
+TBD: Can this be misused by removing the option to cancel an ask/bid?
