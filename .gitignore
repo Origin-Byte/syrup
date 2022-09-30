@@ -1,0 +1,9 @@
+sui.log.*
+.env
+build
+output.bpl
+.coverage_*
+.trace
+node_modules
+package-lock.json
+yarn.lock
