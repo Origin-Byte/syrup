@@ -1,4 +1,4 @@
-module nft_liquidity_layer::custom_collection {
+module syrup::custom_collection {
     //! A simple showcase how to participate in the liquidity layer as a custom
     //! collection implementor.
     //!
@@ -12,7 +12,7 @@ module nft_liquidity_layer::custom_collection {
     //! It would implements royalty distribution based on a business logic which
     //! makes most sense for art NFTs.
 
-    use nft_liquidity_layer::orderbook::{Self, Orderbook};
+    use syrup::orderbook::{Self, Orderbook};
     use std::fixed_point32;
     use sui::object::{Self, UID};
     use sui::balance;

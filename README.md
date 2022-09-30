@@ -12,8 +12,6 @@ $ sui move build
 
 # Orderbook
 
-_(Orderbook is not optimized yet)_
-
 Orderbook implementation where bids are fungible tokens and asks are NFTs.
 A bid is a request to buy one NFT from a specific collection.
 An ask is one NFT with a min price condition.

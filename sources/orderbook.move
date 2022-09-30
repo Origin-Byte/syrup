@@ -1,4 +1,4 @@
-module nft_liquidity_layer::orderbook {
+module syrup::orderbook {
     //! Orderbook where bids are fungible tokens and asks are NFTs.
     //! A bid is a request to buy one NFT from a specific collection.
     //! An ask is one NFT with a min price condition.
@@ -15,11 +15,9 @@ module nft_liquidity_layer::orderbook {
     //! - instantly buy an specific NFT.
 
     // TODO: collect fees on trade
-    // TODO: use a sorted tree for the orders instead of sorted vectors for
-    //       efficient removals and insertions at arbitrary positions
 
     use nft_protocol::nft::{Self, NftOwned};
-    use nft_liquidity_layer::err;
+    use syrup::err;
     use std::fixed_point32::FixedPoint32;
     use std::vector;
     use sui::balance::{Self, Balance};
@@ -27,16 +25,11 @@ module nft_liquidity_layer::orderbook {
     use sui::object::{Self, ID, UID};
     use sui::transfer::{transfer, transfer_to_object};
     use sui::tx_context::{Self, TxContext};
+    use syrup::crit_bit::{Self, CB as CBTree};
 
-    /// A naive order book implementation. Contains two ordered arrays:
+    /// A critbit order book implementation. Contains two ordered trees:
     /// 1. bids ASC
     /// 2. asks DESC
-    ///
-    /// The last element of each array is therefore the first to be considered
-    /// for execution.
-    ///
-    /// TODO: use a sorted tree for efficient removals and insertions at
-    /// arbitrary price levels
     struct Orderbook<phantom C, phantom FT> has key {
         id: UID,
         /// Only NFTs belonging to this collection can be traded.
@@ -46,20 +39,16 @@ module nft_liquidity_layer::orderbook {
         protected_actions: WitnessProtectedActions,
         /// Collects fees in fungible tokens.
         fees: Fees<FT>,
-        /// Ordered by price DESC.
-        ///
         /// An ask order stores an NFT to be traded. The price associated with
         /// such an order is saying:
         ///
         /// > for this NFT, I want to receive at least this amount of FT.
-        asks: vector<Ask>,
-        /// Ordered by price ASC.
-        ///
+        asks: CBTree<vector<Ask>>,
         /// A bid order stores amount of tokens of type "B"(id) to trade. A bid
         /// order is saying:
         ///
         /// > for any NFT in this collection, I will spare this many tokens
-        bids: vector<Bid<FT>>,
+        bids: CBTree<vector<Bid<FT>>>,
     }
 
     struct Fees<phantom FT> has store {
@@ -324,7 +313,7 @@ module nft_liquidity_layer::orderbook {
 
     public fun borrow_bids<C, FT>(
         book: &Orderbook<C, FT>,
-    ): &vector<Bid<FT>> {
+    ): &CBTree<vector<Bid<FT>>> {
         &book.bids
     }
 
@@ -338,7 +327,7 @@ module nft_liquidity_layer::orderbook {
 
     public fun borrow_asks<C, FT>(
         book: &Orderbook<C, FT>,
-    ): &vector<Ask> {
+    ): &CBTree<vector<Ask>> {
         &book.asks
     }
 
@@ -371,8 +360,8 @@ module nft_liquidity_layer::orderbook {
             collection,
             fees,
             protected_actions,
-            asks: vector::empty(),
-            bids: vector::empty(),
+            asks: crit_bit::empty(),
+            bids: crit_bit::empty(),
         }
     }
 
@@ -395,21 +384,41 @@ module nft_liquidity_layer::orderbook {
         let bid_offer = balance::split(coin::balance_mut(wallet), price);
 
         let asks = &mut book.asks;
-        let asks_len = vector::length(asks);
 
-        let can_be_filled = asks_len > 0 &&
-            vector::borrow(asks, asks_len - 1).price <= price;
+        let can_be_filled = !crit_bit::is_empty(asks) &&
+            crit_bit::min_key(asks) <= price;
 
         if (can_be_filled) {
-            let ask = vector::pop_back(asks);
+            let lowest_ask_price = crit_bit::min_key(asks); // TODO: recomputed
+            let price_level = crit_bit::borrow_mut(asks, lowest_ask_price);
+
+            let ask = vector::remove(
+                price_level,
+                // remove zeroth for FIFO, must exist due to `can_be_filled`
+                0,
+            );
+            if (vector::length(price_level) == 0) {
+                // to simplify impl, always delete empty price level
+                vector::destroy_empty(crit_bit::pop(asks, lowest_ask_price));
+            };
 
             transfer(coin::from_balance(bid_offer, ctx), ask.owner);
             transfer(ask, buyer);
         } else {
-            let index = bin_search_bids(price, &book.bids);
             let order = Bid { offer: bid_offer, owner: buyer };
 
-            insert_bid_at(index, order, &mut book.bids);
+            if (crit_bit::has_key(&book.bids, price)) {
+                vector::push_back(
+                    crit_bit::borrow_mut(&mut book.bids, price),
+                    order
+                );
+            } else {
+                crit_bit::insert(
+                    &mut book.bids,
+                    price,
+                    vector::singleton(order),
+                );
+            }
         }
     }
 
@@ -423,32 +432,28 @@ module nft_liquidity_layer::orderbook {
 
         let bids = &mut book.bids;
 
-        // this doesn't guarantee such a price exists, it only returns position
-        // where it would be inserted
-        let index = bin_search_bids(requested_bid_offer_to_cancel, bids);
+        assert!(
+            crit_bit::has_key(bids, requested_bid_offer_to_cancel),
+            err::order_does_not_exist()
+        );
 
-        let bids_count = vector::length(bids);
+        let price_level = crit_bit::borrow_mut(bids, requested_bid_offer_to_cancel);
+
+        let index = 0;
+        let bids_count = vector::length(price_level);
         while (bids_count > index) {
-            let bid = vector::borrow(bids, index);
-            // if price don't match, we didn't find any order belonging to the
-            // sender which we could cancel
-            if (bid.owner == sender ||
-                balance::value(&bid.offer) != requested_bid_offer_to_cancel
-            ) {
+            let bid = vector::borrow(price_level, index);
+            if (bid.owner == sender) {
                 break
             };
 
             index = index + 1;
         };
 
-        let Bid { offer, owner } = vector::remove(bids, index);
 
-        // is this indeed an order owned by the sender with the requested price?
-        assert!(
-            balance::value(&offer) != requested_bid_offer_to_cancel,
-            err::order_does_not_exist()
-        );
-        assert!(owner != sender, err::order_owner_must_be_sender());
+        assert!(index < bids_count, err::order_owner_must_be_sender());
+
+        let Bid { offer, owner: _owner } = vector::remove(price_level, index);
 
         balance::join(
             coin::balance_mut(wallet),
@@ -458,7 +463,7 @@ module nft_liquidity_layer::orderbook {
 
     fun create_ask_<C, FT, Nft: store, Meta: store>(
         book: &mut Orderbook<C, FT>,
-        requested_tokens: u64,
+        price: u64,
         nft: NftOwned<Nft, Meta>,
         ctx: &mut TxContext,
     ) {
@@ -470,16 +475,28 @@ module nft_liquidity_layer::orderbook {
         let seller = tx_context::sender(ctx);
 
         let bids = &mut book.bids;
-        let bids_len = vector::length(bids);
 
-        let can_be_filled = bids_len > 0 &&
-            balance::value(&vector::borrow(bids, bids_len - 1).offer) >= requested_tokens;
+        let can_be_filled = !crit_bit::is_empty(bids) &&
+            crit_bit::max_key(bids) <= price;
 
         if (can_be_filled) {
+            let highest_bid_price = crit_bit::max_key(bids);
+            let price_level = crit_bit::borrow_mut(bids, highest_bid_price);
+
+            let bid = vector::remove(
+                price_level,
+                // remove zeroth for FIFO, must exist due to `can_be_filled`
+                0,
+            );
+            if (vector::length(price_level) == 0) {
+                // to simplify impl, always delete empty price level
+                vector::destroy_empty(crit_bit::pop(bids, highest_bid_price));
+            };
+
             let Bid {
                 owner: buyer,
                 offer: bid_offer,
-            } = vector::pop_back(bids);
+            } = bid;
             // transfer FT to NFT owner
             transfer(coin::from_balance(bid_offer, ctx), seller);
             // transfer NFT to FT owner
@@ -488,15 +505,25 @@ module nft_liquidity_layer::orderbook {
             let id = object::new(ctx);
             let ask = Ask {
                 id,
-                price: requested_tokens,
+                price,
                 nft: object::id(&nft),
                 owner: seller,
             };
             // the NFT is now owned by the Ask object
             transfer_to_object(nft, &mut ask);
             // store the Ask object
-            let index = bin_search_asks(requested_tokens, &book.asks);
-            insert_ask_at(index, ask, &mut book.asks);
+            if (crit_bit::has_key(&book.asks, price)) {
+                vector::push_back(
+                    crit_bit::borrow_mut(&mut book.asks, price),
+                    ask
+                );
+            } else {
+                crit_bit::insert(
+                    &mut book.asks,
+                    price,
+                    vector::singleton(ask),
+                );
+            }
         }
     }
 
@@ -572,14 +599,18 @@ module nft_liquidity_layer::orderbook {
 
     /// Finds an ask of a given NFT advertized for the given price. Removes it
     /// from the asks vector preserving order and returns it.
-    fun remove_ask(asks: &mut vector<Ask>, price: u64, nft_id: ID): Ask {
-        // this doesn't guarantee such a price exists, it only returns position
-        // where it would be inserted
-        let index = bin_search_asks(price, asks);
+    fun remove_ask(asks: &mut CBTree<vector<Ask>>, price: u64, nft_id: ID): Ask {
+        assert!(
+            crit_bit::has_key(asks, price),
+            err::order_does_not_exist()
+        );
 
-        let asks_count = vector::length(asks);
+        let price_level = crit_bit::borrow_mut(asks, price);
+
+        let index = 0;
+        let asks_count = vector::length(price_level);
         while (asks_count > index) {
-            let ask = vector::borrow(asks, index);
+            let ask = vector::borrow(price_level, index);
             // on the same price level, we search for the specified NFT
             if (nft_id == ask.nft) {
                 break
@@ -588,107 +619,9 @@ module nft_liquidity_layer::orderbook {
             index = index + 1;
         };
 
-        let ask = vector::remove(asks, index);
-        assert!(ask.nft != nft_id, err::order_does_not_exist());
-        assert!(ask.price == price, err::order_does_not_exist());
+        assert!(index < asks_count, err::order_owner_must_be_sender());
 
-        ask
-    }
-
-    // The bids are an ordered vector in ASC. Return index where the input
-    // price should be inserted. Since the vector of orders is being filled from
-    // right, if there already exists price on this level, the new one will be
-    // inserted to the left. Hence first come takes priority in filling orders.
-    fun bin_search_bids<T>(price: u64, bids: &vector<Bid<T>>): u64 {
-        let is_bid = true;
-
-        // O(log(bids))
-
-        let l = 0;
-        let r = vector::length(bids);
-
-        if (r == 0 || cmp(balance::value(&vector::borrow(bids, r - 1).offer), price, is_bid)) {
-            // optimization for a scenario where the price is lower than all
-            // existing bids, or higher than all existing bids
-            return r
-        };
-
-        // https://en.wikipedia.org/wiki/Binary_search_algorithm#Procedure_for_finding_the_leftmost_element
-        while (l < r) {
-            let m = (l + r) / 2;
-
-            if (cmp(balance::value(&vector::borrow(bids, m).offer), price, is_bid)) {
-                l = m + 1;
-            } else {
-                r = m;
-            }
-        };
-
-        return l
-    }
-
-    // The asks are an ordered vector in DESC. Return index where the input
-    // price should be inserted. Since the vector of orders is being filled from
-    // right, if there already exists price on this level, the new one will be
-    // inserted to the left. Hence first come takes priority in filling orders.
-    fun bin_search_asks(price: u64, asks: &vector<Ask>): u64 {
-        let is_bid = false;
-
-        // O(log(asks))
-
-        let l = 0;
-        let r = vector::length(asks);
-
-        if (r == 0 || cmp(vector::borrow(asks, r - 1).price, price, is_bid)) {
-            // optimization for a scenario where the price is lower than all
-            // existing asks, or higher than all existing bids
-            return r
-        };
-
-        // https://en.wikipedia.org/wiki/Binary_search_algorithm#Procedure_for_finding_the_leftmost_element
-        while (l < r) {
-            let m = (l + r) / 2;
-
-            if (cmp(vector::borrow(asks, m).price, price, is_bid)) {
-                l = m + 1;
-            } else {
-                r = m;
-            }
-        };
-
-        return l
-    }
-
-    fun cmp(a: u64, b: u64, is_bid: bool): bool {
-        if (is_bid) {
-            b > a
-        } else {
-            a > b
-        }
-    }
-
-    // Unfortunately Move does not support moving memory, so we have to swap
-    // each memory element by one, instead of moving the whole slice.
-    fun insert_bid_at<T>(index: u64, bid: Bid<T>, bids: &mut vector<Bid<T>>) {
-        vector::push_back(bids, bid);
-
-        let n = vector::length(bids) - 1;
-        while (n > index) {
-            vector::swap(bids, n - 1, n);
-            n = n - 1;
-        }
-    }
-
-    // Unfortunately Move does not support moving memory, so we have to swap
-    // each memory element by one, instead of moving the whole slice.
-    fun insert_ask_at(index: u64, ask: Ask, asks: &mut vector<Ask>) {
-        vector::push_back(asks, ask);
-
-        let n = vector::length(asks) - 1;
-        while (n > index) {
-            vector::swap(asks, n - 1, n);
-            n = n - 1;
-        }
+        vector::remove(price_level, index)
     }
 
     fun no_protection(): WitnessProtectedActions {

@@ -1,4 +1,4 @@
-module nft_liquidity_layer::name_service {
+module syrup::name_service {
     //! This example showcases custom implementation for logic creating an ask.
     //!
     //! Now, marketplaces and wallets have two options: implement creating ask
@@ -10,7 +10,7 @@ module nft_liquidity_layer::name_service {
 
     use nft_protocol::collection::{Self, Collection};
     use nft_protocol::nft::NftOwned;
-    use nft_liquidity_layer::orderbook::{Self, Orderbook};
+    use syrup::orderbook::{Self, Orderbook};
     use std::fixed_point32;
     use std::option::Option;
     use std::string::String;

@@ -1,4 +1,4 @@
-module nft_liquidity_layer::err {
+module syrup::err {
     //! Exports error functions. All errors in this smart contract have a prefix
     //! which distinguishes them from errors in other packages.
 
