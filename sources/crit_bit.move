@@ -41,7 +41,7 @@
 /// inner (`I`) and outer (`O`). Inner nodes have two children each
 /// (`I.l` and `I.r`), while outer nodes have no children. There are no
 /// nodes that have exactly one child. Outer nodes store a key-value
-/// pair with a 128-bit integer as a key (`O.k`), and an arbitrary value
+/// pair with a 64-bit integer as a key (`O.k`), and an arbitrary value
 /// of generic type (`O.v`). Inner nodes do not store a key, but rather,
 /// an 8-bit integer (`I.c`) indicating the most-significant critical
 /// bit (crit-bit) of divergence between keys located within the node's
@@ -455,12 +455,8 @@ module syrup::crit_bit {
 
     /// Outer node with key `k` and value `v`
     struct O<V> has store {
-        /// Key, which would preferably be a generic type representing
-        /// the union of {`u8`, `u64`, `u128`}. However this kind of
-        /// union typing is not supported by Move, so the most general
-        /// (and memory intensive) `u128` is instead specified strictly.
         /// Must be an integer for bitwise operations.
-        k: u128,
+        k: u64,
         /// Value from node's key-value pair
         v: V,
         /// Parent node vector index. `ROOT` when node is root,
@@ -491,14 +487,12 @@ module syrup::crit_bit {
 
     // General constants >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-    /// `u128` bitmask with all bits set
-    const HI_128: u128 = 0xffffffffffffffffffffffffffffffff;
     /// `u64` bitmask with all bits set
     const HI_64: u64 = 0xffffffffffffffff;
     /// `u64` bitmask with all bits set, to flag that a node is at root
     const ROOT: u64 = 0xffffffffffffffff;
-    /// Most significant bit number for a `u128`
-    const MSB_u128: u8 = 127;
+    /// Most significant bit number for a `u64`
+    const MSB_u64: u8 = 63;
     /// Bit number of node type flag in a `u64` vector index
     const N_TYPE: u8 = 63;
     /// Node type bit flag indicating inner node
@@ -518,7 +512,7 @@ module syrup::crit_bit {
     /// `cb`, aborting if empty tree or no match
     public fun borrow<V>(
         cb: &CB<V>,
-        k: u128,
+        k: u64,
     ): &V {
         assert!(!is_empty<V>(cb), E_BORROW_EMPTY); // Abort if empty
         let c_o = b_s_o<V>(cb, k); // Borrow search outer node
@@ -530,7 +524,7 @@ module syrup::crit_bit {
     /// `cb`, aborting if empty tree or no match
     public fun borrow_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
     ): &mut V {
         assert!(!is_empty<V>(cb), E_BORROW_EMPTY); // Abort if empty
         let c_o = b_s_o_m<V>(cb, k); // Borrow search outer node
@@ -557,7 +551,7 @@ module syrup::crit_bit {
     /// Return true if `cb` has key `k`
     public fun has_key<V>(
         cb: &CB<V>,
-        k: u128,
+        k: u64,
     ): bool {
         if (is_empty<V>(cb)) return false; // Return false if empty
         // Return true if search outer node has same key
@@ -568,7 +562,7 @@ module syrup::crit_bit {
     /// in `cb`
     public fun insert<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V
     ) {
         let l = length(cb); // Get length of tree
@@ -588,7 +582,7 @@ module syrup::crit_bit {
     /// Return the maximum key in `cb`, aborting if `cb` is empty
     public fun max_key<V>(
         cb: &CB<V>,
-    ): u128 {
+    ): u64 {
         assert!(!is_empty(cb), E_LOOKUP_EMPTY); // Assert tree not empty
         v_b<O<V>>(&cb.o, o_v(max_node_c_i<V>(cb))).k // Return max key
     }
@@ -596,7 +590,7 @@ module syrup::crit_bit {
     /// Return the minimum key in `cb`, aborting if `cb` is empty
     public fun min_key<V>(
         cb: &CB<V>,
-    ): u128 {
+    ): u64 {
         assert!(!is_empty(cb), E_LOOKUP_EMPTY); // Assert tree not empty
         v_b<O<V>>(&cb.o, o_v(min_node_c_i<V>(cb))).k // Return min key
     }
@@ -605,7 +599,7 @@ module syrup::crit_bit {
     /// is empty or does not contain `k`
     public fun pop<V>(
         cb: &mut CB<V>,
-        k: u128
+        k: u64
     ): V {
         assert!(!is_empty(cb), E_POP_EMPTY); // Assert tree not empty
         let l = length(cb); // Get number of outer nodes in tree
@@ -615,7 +609,7 @@ module syrup::crit_bit {
 
     /// Return a tree with one node having key `k` and value `v`
     public fun singleton<V>(
-        k: u128,
+        k: u64,
         v: V
     ):
     CB<V> {
@@ -633,7 +627,7 @@ module syrup::crit_bit {
     ///   traversal, else successor traversal
     ///
     /// # Returns
-    /// * `u128`: Maximum key in `cb` if `d` is `L`, else minimum key
+    /// * `u64`: Maximum key in `cb` if `d` is `L`, else minimum key
     /// * `&mut V`: Mutable reference to corresponding node's value
     /// * `u64`: Parent field of corresponding node
     /// * `u64`: Child field index of corresponding node
@@ -645,7 +639,7 @@ module syrup::crit_bit {
         cb: &mut CB<V>,
         d: bool,
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -663,17 +657,17 @@ module syrup::crit_bit {
     /// Wrapped `traverse_c_i()` call for enumerated return extraction.
     /// See [traversal](#Traversal)
     /// # Returns
-    /// * `u128`: Target key
+    /// * `u64`: Target key
     /// * `&mut V`: Mutable reference to target node's value
     /// * `u64`: Target node's parent field
     /// * `u64`: Child field index of target node
     public fun traverse_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64,
         d: bool
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -707,7 +701,7 @@ module syrup::crit_bit {
     ///   else successor traversal
     ///
     /// # Returns
-    /// * `u128`: Target key
+    /// * `u64`: Target key
     /// * `&mut V`: Mutable reference to target node's value
     /// * `u64`: Target node's parent field
     /// * `u64`: Child field index of target node
@@ -723,13 +717,13 @@ module syrup::crit_bit {
     ///   tracked by the caller
     public fun traverse_pop_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64,
         c_i: u64,
         n_o: u64,
         d: bool
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64,
@@ -803,7 +797,7 @@ module syrup::crit_bit {
     public fun traverse_p_init_mut<V>(
         cb: &mut CB<V>,
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -815,10 +809,10 @@ module syrup::crit_bit {
     /// [traversal walkthrough](#Walkthrough)
     public fun traverse_p_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -830,12 +824,12 @@ module syrup::crit_bit {
     /// [traversal walkthrough](#Walkthrough)
     public fun traverse_p_pop_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64,
         c_i: u64,
         n_o: u64
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64,
@@ -849,7 +843,7 @@ module syrup::crit_bit {
     public fun traverse_s_init_mut<V>(
         cb: &mut CB<V>,
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -861,10 +855,10 @@ module syrup::crit_bit {
     /// [traversal walkthrough](#Walkthrough)
     public fun traverse_s_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64
@@ -876,12 +870,12 @@ module syrup::crit_bit {
     /// [traversal walkthrough](#Walkthrough)
     public fun traverse_s_pop_mut<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64,
         c_i: u64,
         n_o: u64
     ): (
-        u128,
+        u64,
         &mut V,
         u64,
         u64,
@@ -901,7 +895,7 @@ module syrup::crit_bit {
     /// indicates borrow search outer)
     fun b_s_o<V>(
         cb: &CB<V>,
-        k: u128,
+        k: u64,
     ): &O<V> {
         // If root is an outer node, return reference to it
         if (is_out(cb.r)) return (v_b<O<V>>(&cb.o, o_v(cb.r)));
@@ -919,7 +913,7 @@ module syrup::crit_bit {
     /// Like `b_s_o()`, but for mutable reference
     fun b_s_o_m<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
     ): &mut O<V> {
         // If root is an outer node, return mutable reference to it
         if (is_out(cb.r)) return (v_b_m<O<V>>(&mut cb.o, o_v(cb.r)));
@@ -1011,7 +1005,7 @@ module syrup::crit_bit {
     /// # Binary search method
     ///
     /// For the present implementation, strings are not partitioned into
-    /// a multi-byte array, rather, they are stored as `u128` integers,
+    /// a multi-byte array, rather, they are stored as `u64` integers,
     /// so a binary search is instead proposed. Here, the same
     /// `x = s1 ^ s2` operation is first used to identify all differing
     /// bits, before iterating on an upper and lower bound for the
@@ -1023,7 +1017,7 @@ module syrup::crit_bit {
     /// >       u = 7 -|      |- l = 0
     /// ```
     /// The upper bound `u` is initialized to the length of the string
-    /// (7 in this example, but 127 for a `u128`), and the lower bound
+    /// (7 in this example, but 127 for a `u64`), and the lower bound
     /// `l` is initialized to 0. Next the midpoint `m` is calculated as
     /// the average of `u` and `l`, in this case `m = (7 + 0) / 2 = 3`,
     /// per truncating integer division. Now, the shifted compare value
@@ -1073,12 +1067,12 @@ module syrup::crit_bit {
     /// rather than just a bitmask with bit `c` set, as he proposes,
     /// which can also be easily generated via `1 << c`.
     fun crit_bit(
-        s1: u128,
-        s2: u128,
+        s1: u64,
+        s2: u64,
     ): u8 {
         let x = s1 ^ s2; // XOR result marked 1 at bits that differ
         let l = 0; // Lower bound on critical bit search
-        let u = MSB_u128; // Upper bound on critical bit search
+        let u = MSB_u64; // Upper bound on critical bit search
         loop { // Begin binary search
             let m = (l + u) / 2; // Calculate midpoint of search window
             let s = x >> m; // Calculate midpoint shift of XOR result
@@ -1099,7 +1093,7 @@ module syrup::crit_bit {
     /// * `c`: Critical bit between insertion key and search outer node
     fun insert_above<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         n_o: u64,
         i_n_i: u64,
@@ -1138,7 +1132,7 @@ module syrup::crit_bit {
     /// * `c`: Critical bit between insertion key and search outer node
     fun insert_above_root<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         n_o: u64,
         i_n_i: u64,
@@ -1174,13 +1168,13 @@ module syrup::crit_bit {
     /// * `c`: Critical bit between insertion key and search outer node
     fun insert_below<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         n_o: u64,
         i_n_i: u64,
         i_s_o: u64,
         s_s_o: bool,
-        k_s_o: u128,
+        k_s_o: u64,
         i_s_p: u64,
         c: u8
     ) {
@@ -1213,7 +1207,7 @@ module syrup::crit_bit {
     /// * `c`: Critical bit between insertion key and search outer node
     fun insert_below_walk<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         n_o: u64,
         i_n_i: u64,
@@ -1244,7 +1238,7 @@ module syrup::crit_bit {
     /// Insert key-value pair `k` and `v` into an empty `cb`
     fun insert_empty<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V
     ) {
         // Push back outer node onto tree's vector of outer nodes
@@ -1328,7 +1322,7 @@ module syrup::crit_bit {
     /// ```
     fun insert_general<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         n_o: u64
     ) {
@@ -1354,7 +1348,7 @@ module syrup::crit_bit {
     /// if `k` already in `cb`
     fun insert_singleton<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V
     ) {
         let n = v_b<O<V>>(&cb.o, 0); // Borrow existing outer node
@@ -1401,7 +1395,7 @@ module syrup::crit_bit {
     fun is_out(i: u64): bool {(i >> N_TYPE & OUT == OUT)}
 
     /// Return `true` if `k` is set at bit `b`
-    fun is_set(k: u128, b: u8): bool {k >> b & 1 == 1}
+    fun is_set(k: u64, b: u8): bool {k >> b & 1 == 1}
 
     /// Convert unflagged outer node vector index `v` to flagged child
     /// node index, by OR with a bitmask that has only flag bit set
@@ -1512,7 +1506,7 @@ module syrup::crit_bit {
     /// ```
     fun pop_general<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         n_o: u64
     ): V {
         // Get field index of search outer node, its side as a child,
@@ -1530,7 +1524,7 @@ module syrup::crit_bit {
     /// not in `cb`
     fun pop_singleton<V>(
         cb: &mut CB<V>,
-        k: u128
+        k: u64
     ): V {
         // Assert key actually in tree at root node
         assert!(v_b<O<V>>(&cb.o, 0).k == k, E_NOT_HAS_K);
@@ -1584,7 +1578,7 @@ module syrup::crit_bit {
     /// the polarity of the children should be flipped
     fun push_back_insert_nodes<V>(
         cb: &mut CB<V>,
-        k: u128,
+        k: u64,
         v: V,
         i_n_i: u64,
         c: u8,
@@ -1609,16 +1603,16 @@ module syrup::crit_bit {
     /// * `u64`: index of search outer node (with node type bit flag)
     /// * `bool`: the side, `L` or `R`, on which the search outer node
     ///    is a child of its parent
-    /// * `u128`: key of search outer node
+    /// * `u64`: key of search outer node
     /// * `u64`: vector index of parent of search outer node
     /// * `u8`: critical bit indicated by parent of search outer node
     fun search_outer<V>(
         cb: &CB<V>,
-        k: u128
+        k: u64
     ): (
         u64,
         bool,
-        u128,
+        u64,
         u64,
         u8,
     ) {
@@ -1749,7 +1743,7 @@ module syrup::crit_bit {
     /// * Takes an exposed vector index (`p_f`) as a parameter
     fun traverse_c_i<V>(
         cb: &CB<V>,
-        k: u128,
+        k: u64,
         p_f: u64,
         d: bool,
     ): u64 {
@@ -1782,16 +1776,16 @@ module syrup::crit_bit {
 
     #[test_only]
     /// Return a bitmask with all bits high except for bit `b`,
-    /// 0-indexed starting at LSB: bitshift 1 by `b`, XOR with `HI_128`
-    fun b_lo(b: u8): u128 {1 << b ^ HI_128}
+    /// 0-indexed starting at LSB: bitshift 1 by `b`, XOR with `HI_64`
+    fun b_lo(b: u8): u64 {1 << b ^ HI_64}
 
     #[test_only]
-    /// Return a `u128` corresponding to the provided byte string. The
-    /// byte should only contain only "0"s and "1"s, up to 128
+    /// Return a `u64` corresponding to the provided byte string. The
+    /// byte should only contain only "0"s and "1"s, up to 64
     /// characters max (e.g. `b"100101...10101010"`)
     public fun u(
         s: vector<u8>
-    ): u128 {
+    ): u64 {
         let n = v_l<u8>(&s); // Get number of bits
         let r = 0; // Initialize result to 0
         let i = 0; // Start loop at least significant bit
@@ -1808,16 +1802,16 @@ module syrup::crit_bit {
     }
 
     #[test_only]
-    /// Return `u128` corresponding to concatenated result of `a`, `b`,
+    /// Return `u64` corresponding to concatenated result of `a`, `b`,
     /// and `c`. Useful for line-wrapping long byte strings
     public fun u_long(
         a: vector<u8>,
         b: vector<u8>,
         c: vector<u8>
-    ): u128 {
+    ): u64 {
         v_a<u8>(&mut b, c); // Append c onto b
         v_a<u8>(&mut a, b); // Append b onto a
-        u(a) // Return u128 equivalent of concatenated bytestring
+        u(a) // Return u64 equivalent of concatenated bytestring
     }
 
     // Test-only functions <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -1827,9 +1821,8 @@ module syrup::crit_bit {
     #[test]
     /// Verify successful bitmask generation
     fun b_lo_success() {
-        assert!(b_lo(0) == HI_128 - 1, 0);
-        assert!(b_lo(1) == HI_128 - 2, 1);
-        assert!(b_lo(127) == 0x7fffffffffffffffffffffffffffffff, 2);
+        assert!(b_lo(0) == HI_64 - 1, 0);
+        assert!(b_lo(1) == HI_64 - 2, 1);
     }
 
     #[test]
@@ -1911,7 +1904,7 @@ module syrup::crit_bit {
     /// Verify successful determination of critical bit at all positions
     fun crit_bit_success() {
         let b = 0; // Start loop for bit 0
-        while (b <= MSB_u128) { // Loop over all bit numbers
+        while (b <= MSB_u64) { // Loop over all bit numbers
             // Compare 0 versus a bitmask that is only set at bit b
             assert!(crit_bit(0, 1 << b) == b, (b as u64));
             b = b + 1; // Increment bit counter
@@ -2580,7 +2573,7 @@ module syrup::crit_bit {
         v_pu_b<I>(&mut cb.i, I{c: 1, p:    0, l: o_c(3), r: o_c(1)});
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"001"), v, p: 0});
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"111"), v, p: 1});
-        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_128, v, p: HI_64}); // Bogus
+        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_64, v, p: HI_64}); // Bogus
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"101"), v, p: 1});
         // Swap remove and unpack bogus node
         let O{k: _, v: _, p: _} = v_s_r<O<u8>>(&mut cb.o, 2);
@@ -2611,7 +2604,7 @@ module syrup::crit_bit {
         v_pu_b<I>(&mut cb.i, I{c: 1, p:    0, l: o_c(1), r: o_c(3)});
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"001"), v, p: 0});
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"101"), v, p: 1});
-        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_128, v, p: HI_64}); // Bogus
+        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_64, v, p: HI_64}); // Bogus
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"111"), v, p: 1});
         // Swap remove and unpack bogus node
         let O{k: _, v: _, p: _} = v_s_r<O<u8>>(&mut cb.o, 2);
@@ -2669,7 +2662,7 @@ module syrup::crit_bit {
         let cb = empty<u8>(); // Initialize empty tree
         // Append root outer node per above diagram, including bogus
         // outer node at vector index 0, which will be swap removed
-        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_128, v, p: HI_64}); // Bogus
+        v_pu_b<O<u8>>(&mut cb.o, O{k:    HI_64, v, p: HI_64}); // Bogus
         v_pu_b<O<u8>>(&mut cb.o, O{k: u(b"100"), v, p:  ROOT});
         // Swap remove and unpack bogus node
         let O{k: _, v: _, p: _} = v_s_r<O<u8>>(&mut cb.o, 0);
@@ -3020,12 +3013,12 @@ module syrup::crit_bit {
             b"111111111111111111111111111111111111111111111111111111111111",
             b"111111111111111111111111111111111111111111111111111111111111",
             b"11111111"
-        ) == HI_128, 9);
+        ) == HI_64, 9);
         assert!(u_long( // 60 characters on first two lines, 8 on last
             b"111111111111111111111111111111111111111111111111111111111111",
             b"111111111111111111111111111111111111111111111111111111111111",
             b"11111110"
-        ) == HI_128 - 1, 10);
+        ) == HI_64 - 1, 10);
     }
 
     // Tests <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
