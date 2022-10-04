@@ -37,7 +37,7 @@ module syrup::orderbook {
         /// witness protected implementation.
         protected_actions: WitnessProtectedActions,
         /// Collects fees in fungible tokens.
-        fees: Fees<Col, FT>,
+        fees: Fees<FT>,
         /// An ask order stores an NFT to be traded. The price associated with
         /// such an order is saying:
         ///
@@ -50,7 +50,7 @@ module syrup::orderbook {
         bids: CBTree<vector<Bid<FT>>>,
     }
 
-    struct Fees<phantom Col, phantom FT> has store {
+    struct Fees<phantom FT> has store {
         /// All fees during trading are collected here and the witness protected
         /// method [`collect_fees`] is implemented by downstream packages.
         ///
