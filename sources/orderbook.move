@@ -16,29 +16,28 @@ module syrup::orderbook {
 
     // TODO: collect fees on trade
 
-    use nft_protocol::nft::{Self, NftOwned};
     use syrup::err;
     use std::fixed_point32::FixedPoint32;
     use std::vector;
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::object::{Self, ID, UID};
-    use sui::transfer::{transfer, transfer_to_object};
+    use sui::transfer::transfer;
     use sui::tx_context::{Self, TxContext};
     use syrup::crit_bit::{Self, CB as CBTree};
+    use syrup::collection;
+    use syrup::safe::{Self, Safe, TransferCap};
 
     /// A critbit order book implementation. Contains two ordered trees:
     /// 1. bids ASC
     /// 2. asks DESC
-    struct Orderbook<phantom C, phantom FT> has key {
+    struct Orderbook<phantom Wness, phantom Col, phantom FT> has key {
         id: UID,
-        /// Only NFTs belonging to this collection can be traded.
-        collection: ID,
         /// Actions which have a flag set to true can only be called via a
         /// witness protected implementation.
         protected_actions: WitnessProtectedActions,
         /// Collects fees in fungible tokens.
-        fees: Fees<FT>,
+        fees: Fees<Col, FT>,
         /// An ask order stores an NFT to be traded. The price associated with
         /// such an order is saying:
         ///
@@ -51,7 +50,7 @@ module syrup::orderbook {
         bids: CBTree<vector<Bid<FT>>>,
     }
 
-    struct Fees<phantom FT> has store {
+    struct Fees<phantom Col, phantom FT> has store {
         /// All fees during trading are collected here and the witness protected
         /// method [`collect_fees`] is implemented by downstream packages.
         ///
@@ -107,8 +106,8 @@ module syrup::orderbook {
         id: UID,
         /// How many tokens does the seller want for their NFT in exchange.
         price: u64,
-        /// The pointer to the offered NFT.
-        nft: ID,
+        /// Capability to get an NFT from a safe.
+        nft_cap: TransferCap,
         /// Who owns the NFT.
         owner: address,
     }
@@ -120,8 +119,8 @@ module syrup::orderbook {
     /// If the `price` is higher than the lowest ask requested price, then we
     /// execute a trade straight away. Otherwise we add the bid to the
     /// orderbook's state.
-    public entry fun create_bid<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    public entry fun create_bid<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -129,9 +128,9 @@ module syrup::orderbook {
         assert!(book.protected_actions.create_bid, err::action_not_public());
         create_bid_(book, price, wallet, ctx)
     }
-    public fun create_bid_protected<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun create_bid_protected<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -141,8 +140,8 @@ module syrup::orderbook {
 
     /// Cancel a bid owned by the sender at given price. If there are two bids
     /// with the same price, the one created later is cancelled.
-    public entry fun cancel_bid<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    public entry fun cancel_bid<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -150,9 +149,9 @@ module syrup::orderbook {
         assert!(book.protected_actions.cancel_bid, err::action_not_public());
         cancel_bid_(book, requested_bid_offer_to_cancel, wallet, ctx)
     }
-    public fun cancel_bid_protected<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun cancel_bid_protected<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -164,23 +163,25 @@ module syrup::orderbook {
     /// there exists a bid with higher offer than `requsted_tokens`, then trade
     /// is immeidately executed. Otherwise the NFT is transferred to a newly
     /// created ask object and the object is inserted to the orderbook.
-    public entry fun create_ask<C, FT, Nft: store, Meta: store>(
-        book: &mut Orderbook<C, FT>,
+    public entry fun create_ask<Wness, Col: key, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         requsted_tokens: u64,
-        nft: NftOwned<Nft, Meta>,
+        nft_cap: TransferCap,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.create_ask, err::action_not_public());
-        create_ask_(book, requsted_tokens, nft, ctx)
+        create_ask_(book, requsted_tokens, nft_cap, safe, ctx)
     }
-    public fun create_ask_protected<C: drop, FT, Nft: store, Meta: store>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun create_ask_protected<Wness: drop, Col: key, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
         requsted_tokens: u64,
-        nft: NftOwned<Nft, Meta>,
+        nft_cap: TransferCap,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
-        create_ask_(book, requsted_tokens, nft, ctx)
+        create_ask_(book, requsted_tokens, nft_cap, safe, ctx)
     }
 
     /// We could remove the NFT requested price from the argument, but then the
@@ -188,8 +189,8 @@ module syrup::orderbook {
     ///
     /// This API might be improved in future as we use a different data
     /// structure for the orderbook.
-    public entry fun cancel_ask<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    public entry fun cancel_ask<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_price_to_cancel: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -197,9 +198,9 @@ module syrup::orderbook {
         assert!(book.protected_actions.cancel_ask, err::action_not_public());
         cancel_ask_(book, requested_price_to_cancel, nft_id, ctx)
     }
-    public entry fun cancel_ask_protected<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public entry fun cancel_ask_protected<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_price_to_cancel: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -210,8 +211,8 @@ module syrup::orderbook {
     /// Buys a specific NFT from the orderbook. This is an atypical OB API as
     /// with fungible tokens, you just want to get the cheapest ask.
     /// However, with NFTs, you might want to get a specific one.
-    public entry fun buy_nft<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    public entry fun buy_nft<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
@@ -220,26 +221,15 @@ module syrup::orderbook {
         assert!(book.protected_actions.buy_nft, err::action_not_public());
         buy_nft_(book, nft_id, price, wallet, ctx)
     }
-    public entry fun buy_nft_protected<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public entry fun buy_nft_protected<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
     ) {
         buy_nft_(book, nft_id, price, wallet, ctx)
-    }
-
-    /// After a bid is matched with an ask, the buyer can claim the NFT via this
-    /// method, because they will have received the ownership of the
-    /// corresponding [`Ask`] object.
-    public entry fun claim_nft<T: store, Meta: store>(
-        ask: Ask,
-        nft: NftOwned<T, Meta>,
-        ctx: &mut TxContext,
-    ) {
-        claim_nft_(ask, nft, ctx)
     }
 
     /// `C`ollection kind of NFTs to be traded, and `F`ungible `T`oken to be
@@ -251,46 +241,45 @@ module syrup::orderbook {
     /// To implement specific logic in your smart contract, you can toggle the
     /// protection on specific actions. That will make them only accessible via
     /// witness protected methods.
-    public fun create<C: drop, FT>(
-        _witness: C,
-        collection: ID,
+    public fun create<Wness: drop, Col: key, FT>(
+        _witness: Wness,
         fee: FixedPoint32,
         ctx: &mut TxContext,
-    ): Orderbook<C, FT> {
-        create_<C, FT>(collection, fee, no_protection(), ctx)
+    ): Orderbook<Wness, Col, FT> {
+        create_<Wness, Col, FT>(fee, no_protection(), ctx)
     }
 
-    public fun toggle_protection_on_buy_nft<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun toggle_protection_on_buy_nft<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
     ) {
         book.protected_actions.buy_nft =
             !book.protected_actions.buy_nft;
     }
-    public fun toggle_protection_on_cancel_ask<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun toggle_protection_on_cancel_ask<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
     ) {
         book.protected_actions.cancel_ask =
             !book.protected_actions.cancel_ask;
     }
-    public fun toggle_protection_on_cancel_bid<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun toggle_protection_on_cancel_bid<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
     ) {
         book.protected_actions.cancel_bid =
             !book.protected_actions.cancel_bid;
     }
-    public fun toggle_protection_on_create_ask<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun toggle_protection_on_create_ask<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
     ) {
         book.protected_actions.create_ask =
             !book.protected_actions.create_ask;
     }
-    public fun toggle_protection_on_create_bid<C: drop, FT>(
-        _witness: C,
-        book: &mut Orderbook<C, FT>,
+    public fun toggle_protection_on_create_bid<Wness: drop, Col, FT>(
+        _witness: Wness,
+        book: &mut Orderbook<Wness, Col, FT>,
     ) {
         book.protected_actions.create_bid =
             !book.protected_actions.create_bid;
@@ -298,21 +287,15 @@ module syrup::orderbook {
 
     /// The contract which instantiated the OB implements logic for distibuting
     /// the fee based on its requirements.
-    public fun fees_balance<C: drop, FT>(
-        _witness: C,
-        orderbook: &mut Orderbook<C, FT>,
+    public fun fees_balance<Wness: drop, Col, FT>(
+        _witness: Wness,
+        orderbook: &mut Orderbook<Wness, Col, FT>,
     ): &mut Balance<FT> {
         fees_balance_(orderbook)
     }
 
-    public fun collection_id<C, FT>(
-        book: &Orderbook<C, FT>,
-    ): ID {
-        book.collection
-    }
-
-    public fun borrow_bids<C, FT>(
-        book: &Orderbook<C, FT>,
+    public fun borrow_bids<Wness, Col, FT>(
+        book: &Orderbook<Wness, Col, FT>,
     ): &CBTree<vector<Bid<FT>>> {
         &book.bids
     }
@@ -325,8 +308,8 @@ module syrup::orderbook {
         bid.owner
     }
 
-    public fun borrow_asks<C, FT>(
-        book: &Orderbook<C, FT>,
+    public fun borrow_asks<Wness, Col, FT>(
+        book: &Orderbook<Wness, Col, FT>,
     ): &CBTree<vector<Ask>> {
         &book.asks
     }
@@ -335,29 +318,27 @@ module syrup::orderbook {
         ask.price
     }
 
-    public fun ask_nft_id(ask: &Ask): ID {
-        ask.nft
+    public fun ask_nft(ask: &Ask): &TransferCap {
+        &ask.nft_cap
     }
 
     public fun ask_owner(ask: &Ask): address {
         ask.owner
     }
 
-    fun create_<C, FT>(
-        collection: ID,
+    fun create_<Wness, Col: key, FT>(
         fee: FixedPoint32,
         protected_actions: WitnessProtectedActions,
         ctx: &mut TxContext,
-    ): Orderbook<C, FT> {
+    ): Orderbook<Wness, Col, FT> {
         let id = object::new(ctx);
         let fees = Fees {
             uncollected: balance::zero(),
             fee,
         };
 
-        Orderbook<C, FT> {
+        Orderbook<Wness, Col, FT> {
             id,
-            collection,
             fees,
             protected_actions,
             asks: crit_bit::empty(),
@@ -365,14 +346,14 @@ module syrup::orderbook {
         }
     }
 
-    fun fees_balance_<C, FT>(
-        orderbook: &mut Orderbook<C, FT>,
+    fun fees_balance_<Wness, Col, FT>(
+        orderbook: &mut Orderbook<Wness, Col, FT>,
     ): &mut Balance<FT> {
         &mut orderbook.fees.uncollected
     }
 
-    fun create_bid_<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    fun create_bid_<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -422,8 +403,8 @@ module syrup::orderbook {
         }
     }
 
-    fun cancel_bid_<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    fun cancel_bid_<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -461,14 +442,15 @@ module syrup::orderbook {
         );
     }
 
-    fun create_ask_<C, FT, Nft: store, Meta: store>(
-        book: &mut Orderbook<C, FT>,
+    fun create_ask_<Wness, Col: key, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
-        nft: NftOwned<Nft, Meta>,
+        nft_cap: TransferCap,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
         assert!(
-            nft::collection_id(&nft) == book.collection,
+            object::id(safe) == safe::transfer_cap_safe_id(&nft_cap),
             err::nft_collection_mismatch(),
         );
 
@@ -497,20 +479,17 @@ module syrup::orderbook {
                 owner: buyer,
                 offer: bid_offer,
             } = bid;
-            // transfer FT to NFT owner
-            transfer(coin::from_balance(bid_offer, ctx), seller);
-            // transfer NFT to FT owner
-            transfer(nft, buyer); // TODO: use the nft transfer fn
+            let trade = collection::begin_nft_trade_with(bid_offer, ctx);
+            let nft = safe::trade_nft<Col, FT>(nft_cap, trade, safe);
+            transfer(nft, buyer);
         } else {
             let id = object::new(ctx);
             let ask = Ask {
                 id,
                 price,
-                nft: object::id(&nft),
                 owner: seller,
+                nft_cap,
             };
-            // the NFT is now owned by the Ask object
-            transfer_to_object(nft, &mut ask);
             // store the Ask object
             if (crit_bit::has_key(&book.asks, price)) {
                 vector::push_back(
@@ -527,8 +506,8 @@ module syrup::orderbook {
         }
     }
 
-    fun cancel_ask_<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    fun cancel_ask_<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         requested_price_to_cancel: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -548,8 +527,8 @@ module syrup::orderbook {
         transfer(ask, sender);
     }
 
-    fun buy_nft_<C, FT>(
-        book: &mut Orderbook<C, FT>,
+    fun buy_nft_<Wness, Col, FT>(
+        book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
@@ -571,32 +550,6 @@ module syrup::orderbook {
         transfer(ask, buyer);
     }
 
-    /// The NFT is owned by the ask object, the ownership is transferred in
-    /// the [`create_ask`] function.
-    /// Here, we destruct the ask and give the ownership of the NFT to the owner
-    /// of the ask object.
-    /// To become an owner of an ask object, one has to create a bid which is
-    /// filled.
-    fun claim_nft_<T: store, Meta: store>(
-        ask: Ask,
-        nft: NftOwned<T, Meta>,
-        ctx: &mut TxContext,
-    ) {
-        let sender = tx_context::sender(ctx);
-
-        let Ask {
-            nft: nft_id,
-            id: ask_id,
-            price: _,
-            owner: _,
-        } = ask;
-
-        assert!(nft_id == object::id(&nft), err::nft_id_mismatch());
-
-        object::delete(ask_id);
-        transfer(nft, sender); // TODO: transfer must be done by the nft module
-    }
-
     /// Finds an ask of a given NFT advertized for the given price. Removes it
     /// from the asks vector preserving order and returns it.
     fun remove_ask(asks: &mut CBTree<vector<Ask>>, price: u64, nft_id: ID): Ask {
@@ -612,14 +565,14 @@ module syrup::orderbook {
         while (asks_count > index) {
             let ask = vector::borrow(price_level, index);
             // on the same price level, we search for the specified NFT
-            if (nft_id == ask.nft) {
+            if (nft_id == safe::transfer_cap_nft_id(&ask.nft_cap)) {
                 break
             };
 
             index = index + 1;
         };
 
-        assert!(index < asks_count, err::order_owner_must_be_sender());
+        assert!(index < asks_count, err::order_does_not_exist());
 
         vector::remove(price_level, index)
     }
