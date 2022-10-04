@@ -53,9 +53,6 @@ module syrup::orderbook {
     struct Fees<phantom FT> has store {
         /// All fees during trading are collected here and the witness protected
         /// method [`collect_fees`] is implemented by downstream packages.
-        ///
-        /// For example, in case of standard art collections, these fees
-        /// represent royalties.
         uncollected: Balance<FT>,
         /// in iterval `[0; 1)`
         fee: FixedPoint32,
@@ -123,6 +120,7 @@ module syrup::orderbook {
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
+        // TODO: ask for Safe Or exlusive transfer cap
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.create_bid, err::action_not_public());
@@ -191,45 +189,47 @@ module syrup::orderbook {
     /// structure for the orderbook.
     public entry fun cancel_ask<Wness, Col, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
-        requested_price_to_cancel: u64,
+        nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.cancel_ask, err::action_not_public());
-        cancel_ask_(book, requested_price_to_cancel, nft_id, ctx)
+        cancel_ask_(book, nft_price, nft_id, ctx)
     }
     public entry fun cancel_ask_protected<Wness: drop, Col, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
-        requested_price_to_cancel: u64,
+        nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
     ) {
-        cancel_ask_(book, requested_price_to_cancel, nft_id, ctx)
+        cancel_ask_(book, nft_price, nft_id, ctx)
     }
 
     /// Buys a specific NFT from the orderbook. This is an atypical OB API as
     /// with fungible tokens, you just want to get the cheapest ask.
     /// However, with NFTs, you might want to get a specific one.
-    public entry fun buy_nft<Wness, Col, FT>(
+    public entry fun buy_nft<Wness, Col: key, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.buy_nft, err::action_not_public());
-        buy_nft_(book, nft_id, price, wallet, ctx)
+        buy_nft_(book, nft_id, price, wallet, safe, ctx)
     }
-    public entry fun buy_nft_protected<Wness: drop, Col, FT>(
+    public entry fun buy_nft_protected<Wness: drop, Col: key, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
-        buy_nft_(book, nft_id, price, wallet, ctx)
+        buy_nft_(book, nft_id, price, wallet, safe, ctx)
     }
 
     /// `C`ollection kind of NFTs to be traded, and `F`ungible `T`oken to be
@@ -508,46 +508,56 @@ module syrup::orderbook {
 
     fun cancel_ask_<Wness, Col, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
-        requested_price_to_cancel: u64,
+        nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
     ) {
         let sender = tx_context::sender(ctx);
 
-        let ask = remove_ask(
+        let Ask {
+            owner,
+            id,
+            price: _,
+            nft_cap
+        } = remove_ask(
             &mut book.asks,
-            requested_price_to_cancel,
+            nft_price,
             nft_id,
         );
 
-        assert!(ask.owner != sender, err::order_owner_must_be_sender());
+        assert!(owner != sender, err::order_owner_must_be_sender());
 
-        // TODO: figure out whether we can provide NftOwned here and do the
-        // transfer without the intermediary step
-        transfer(ask, sender);
+        object::delete(id);
+        transfer(nft_cap, sender);
     }
 
-    fun buy_nft_<Wness, Col, FT>(
+    fun buy_nft_<Wness, Col: key, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
+        safe: &mut Safe<Col>,
         ctx: &mut TxContext,
     ) {
         let buyer = tx_context::sender(ctx);
 
-        let ask = remove_ask(
+        let Ask {
+            id,
+            nft_cap,
+            owner: _,
+            price: _,
+        } = remove_ask(
             &mut book.asks,
             price,
             nft_id,
         );
+        object::delete(id);
 
-        // pay the NFT owner
-        coin::split_and_transfer(wallet, price, ask.owner, ctx);
+        let offer = balance::split(coin::balance_mut(wallet), price);
 
-        // TODO: figure out whether we can provide NftOwned here and do the
-        // transfer without the intermediary step
-        transfer(ask, buyer);
+        let trade = collection::begin_nft_trade_with(offer, ctx);
+        let nft = safe::trade_nft<Col, FT>(nft_cap, trade, safe);
+        transfer(nft, buyer);
     }
 
     /// Finds an ask of a given NFT advertized for the given price. Removes it
