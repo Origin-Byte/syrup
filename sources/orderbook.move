@@ -109,7 +109,7 @@ module liquidity_layer::orderbook {
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>, // !!!
+        safe: &mut Safe<Col>, // !!! https://github.com/MystenLabs/sui/pull/4887/files#r984862924
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.create_bid, err::action_not_public());
@@ -120,7 +120,7 @@ module liquidity_layer::orderbook {
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>, // !!!
+        safe: &mut Safe<Col>, // !!! https://github.com/MystenLabs/sui/pull/4887/files#r984862924
         ctx: &mut TxContext,
     ) {
         create_bid_(book, price, wallet, safe, ctx)
@@ -324,7 +324,7 @@ module liquidity_layer::orderbook {
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>, // !!!
+        safe: &mut Safe<Col>, // !!! https://github.com/MystenLabs/sui/pull/4887/files#r984862924
         ctx: &mut TxContext,
     ) {
         let buyer = tx_context::sender(ctx);
