@@ -22,10 +22,11 @@ module liquidity_layer::collection {
 
     struct TradePayment<phantom FT> has key {
         id: UID,
-        /// Same as `Trade::id` if the NFT was sold for just one FT kind.
-        /// However, can bind multiple `Trade` object with a different generic
-        /// into one logical unit if the royalty logic requires e.g. payment in
-        /// both `SUI` and `USDC`.
+        /// Could be same as `TradePayment::id` if the NFT was sold for just one
+        /// FT kind.
+        /// However, can bind multiple `TradePayment` objects with a different
+        /// generic into one logical unit if the royalty logic requires e.g.
+        /// payment in both `SUI` and `USDC`.
         trade: ID,
         amount: Balance<FT>,
     }
