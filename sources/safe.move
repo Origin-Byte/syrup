@@ -1,10 +1,10 @@
 //! Taken from https://github.com/MystenLabs/sui/pull/4887/files#diff-96b0dc07cabd79292618c993cd473c43ca81cd2f742266014967cdea1a7c6186
 //! and modified.
 
-module syrup::safe {
+module liquidity_layer::safe {
     use sui::object::{ID, UID};
     use sui::transfer::transfer_to_object;
-    use syrup::collection::{Trade};
+    use liquidity_layer::collection::{TradeReceipt};
 
     /// A shared object for storing NFT's of type `T`, owned by the holder of a unique `OwnerCap`.
     /// Permissions to allow others to list NFT's can be granted via TransferCap's and BorrowCap's
@@ -41,7 +41,7 @@ module syrup::safe {
 
     public fun trade_nft<Wness, T, FT>(
         _cap: TransferCap,
-        trade: Trade<Wness>,
+        trade: TradeReceipt<Wness>,
         safe: &mut Safe<T>,
     ): T {
         transfer_to_object(trade, safe);

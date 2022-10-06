@@ -402,7 +402,7 @@
 ///
 /// ---
 ///
-module syrup::crit_bit {
+module liquidity_layer::crit_bit {
     use std::vector::{
         borrow as v_b,
         borrow_mut as v_b_m,

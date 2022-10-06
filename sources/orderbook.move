@@ -1,4 +1,4 @@
-module syrup::orderbook {
+module liquidity_layer::orderbook {
     //! Orderbook where bids are fungible tokens and asks are NFTs.
     //! A bid is a request to buy one NFT from a specific collection.
     //! An ask is one NFT with a min price condition.
@@ -22,10 +22,10 @@ module syrup::orderbook {
     use sui::object::{Self, ID, UID};
     use sui::transfer::transfer;
     use sui::tx_context::{Self, TxContext};
-    use syrup::collection;
-    use syrup::crit_bit::{Self, CB as CBTree};
-    use syrup::err;
-    use syrup::safe::{Self, Safe, TransferCap};
+    use liquidity_layer::collection;
+    use liquidity_layer::crit_bit::{Self, CB as CBTree};
+    use liquidity_layer::err;
+    use liquidity_layer::safe::{Self, Safe, TransferCap};
 
     /// A critbit order book implementation. Contains two ordered trees:
     /// 1. bids ASC
@@ -105,7 +105,7 @@ module syrup::orderbook {
     /// If the `price` is higher than the lowest ask requested price, then we
     /// execute a trade straight away. Otherwise we add the bid to the
     /// orderbook's state.
-    public entry fun create_bid<Wness, Col: key, FT>(
+    public entry fun create_bid<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
@@ -115,7 +115,7 @@ module syrup::orderbook {
         assert!(book.protected_actions.create_bid, err::action_not_public());
         create_bid_(book, price, wallet, safe, ctx)
     }
-    public fun create_bid_protected<Wness: drop, Col: key, FT>(
+    public fun create_bid_protected<Wness: drop, Col: key + store, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
@@ -151,7 +151,7 @@ module syrup::orderbook {
     /// there exists a bid with higher offer than `requsted_tokens`, then trade
     /// is immeidately executed. Otherwise the NFT is transferred to a newly
     /// created ask object and the object is inserted to the orderbook.
-    public entry fun create_ask<Wness, Col: key, FT>(
+    public entry fun create_ask<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         requsted_tokens: u64,
         nft_cap: TransferCap,
@@ -161,7 +161,7 @@ module syrup::orderbook {
         assert!(book.protected_actions.create_ask, err::action_not_public());
         create_ask_(book, requsted_tokens, nft_cap, safe, ctx)
     }
-    public fun create_ask_protected<Wness: drop, Col: key, FT>(
+    public fun create_ask_protected<Wness: drop, Col: key + store, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
         requsted_tokens: u64,
@@ -199,7 +199,7 @@ module syrup::orderbook {
     /// Buys a specific NFT from the orderbook. This is an atypical OB API as
     /// with fungible tokens, you just want to get the cheapest ask.
     /// However, with NFTs, you might want to get a specific one.
-    public entry fun buy_nft<Wness, Col: key, FT>(
+    public entry fun buy_nft<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
@@ -210,7 +210,7 @@ module syrup::orderbook {
         assert!(book.protected_actions.buy_nft, err::action_not_public());
         buy_nft_(book, nft_id, price, wallet, safe, ctx)
     }
-    public entry fun buy_nft_protected<Wness: drop, Col: key, FT>(
+    public entry fun buy_nft_protected<Wness: drop, Col: key + store, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
@@ -320,7 +320,7 @@ module syrup::orderbook {
         }
     }
 
-    fun create_bid_<Wness, Col: key, FT>(
+    fun create_bid_<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
@@ -420,7 +420,7 @@ module syrup::orderbook {
         );
     }
 
-    fun create_ask_<Wness, Col: key, FT>(
+    fun create_ask_<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         nft_cap: TransferCap,
@@ -513,7 +513,7 @@ module syrup::orderbook {
         transfer(nft_cap, sender);
     }
 
-    fun buy_nft_<Wness, Col: key, FT>(
+    fun buy_nft_<Wness, Col: key + store, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         nft_id: ID,
         price: u64,
