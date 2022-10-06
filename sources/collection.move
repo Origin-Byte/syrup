@@ -16,7 +16,7 @@ module syrup::collection {
         collection_id: ID
     }
 
-    struct Trade has key {
+    struct Trade<phantom Wness> has key {
         id: UID,
     }
 
@@ -27,14 +27,14 @@ module syrup::collection {
         /// into one logical unit if the royalty logic requires e.g. payment in
         /// both `SUI` and `USDC`.
         trade: ID,
-        amount: Balance<FT>
+        amount: Balance<FT>,
     }
 
     /// Resolve the trade with [`safe::trade_nft`]
-    public fun begin_nft_trade_with<FT>(
+    public fun begin_nft_trade_with<Wness, FT>(
         amount: Balance<FT>,
         ctx: &mut TxContext,
-    ): Trade {
+    ): Trade<Wness> {
         let trade = begin_nft_trade(ctx);
         pay_for_nft(&mut trade, amount, ctx);
 
@@ -42,14 +42,14 @@ module syrup::collection {
     }
 
     /// Resolve the trade with [`safe::trade_nft`]
-    public fun begin_nft_trade(ctx: &mut TxContext): Trade {
+    public fun begin_nft_trade<Wness>(ctx: &mut TxContext): Trade<Wness> {
         Trade {
             id: object::new(ctx),
         }
     }
 
-    public fun pay_for_nft<FT>(
-        trade: &mut Trade,
+    public fun pay_for_nft<Wness, FT>(
+        trade: &mut Trade<Wness>,
         amount: Balance<FT>,
         ctx: &mut TxContext,
     ) {

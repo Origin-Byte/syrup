@@ -4,12 +4,14 @@
 module syrup::safe {
     use sui::object::{ID, UID};
     use sui::transfer::transfer_to_object;
-    use syrup::collection::{CollectionProof, Trade};
+    use syrup::collection::{Trade};
 
     /// A shared object for storing NFT's of type `T`, owned by the holder of a unique `OwnerCap`.
     /// Permissions to allow others to list NFT's can be granted via TransferCap's and BorrowCap's
     struct Safe<phantom T> has key {
         id: UID,
+        owner: address,
+        // ... contains the fields from MR
     }
 
     /// A unique capability held by the owner of a particular `Safe`.
@@ -25,11 +27,10 @@ module syrup::safe {
     /// the safe with id `safe_id`. Can only be used once.
     struct TransferCap has key, store {
         id: UID,
-        /// The ID of the safe that this capability grants permissions to
         safe_id: ID,
-        /// The ID of the NFT that this capability can transfer
         nft_id: ID,
-        proof: CollectionProof,
+        // only one transfer cap for this nft can exist if this is true
+        is_exlusive: bool,
     }
 
     /// Produce a `TransferCap` for the NFT with `id` in `safe`.
@@ -38,18 +39,18 @@ module syrup::safe {
         abort(0)
     }
 
-    /// Consume `cap`, remove the NFT with `id` from `safe`, and return it to the caller.
-    /// Requiring `royalty` ensures that the caller has paid the required royalty for this collection
-    /// before completing  the purchase.
-    /// This invalidates all other `TransferCap`'s by increasing safe.transfer_cap_version
-    public fun trade_nft<T, FT>(
+    public fun trade_nft<Wness, T, FT>(
         _cap: TransferCap,
-        trade: Trade,
+        trade: Trade<Wness>,
         safe: &mut Safe<T>,
     ): T {
         transfer_to_object(trade, safe);
 
         abort(0)
+    }
+
+    public fun safe_owner<Col>(safe: &Safe<Col>): address {
+        safe.owner
     }
 
     public fun transfer_cap_safe_id(cap: &TransferCap): ID {
@@ -58,5 +59,9 @@ module syrup::safe {
 
     public fun transfer_cap_nft_id(cap: &TransferCap): ID {
         cap.nft_id
+    }
+
+    public fun transfer_cap_is_exclusive(cap: &TransferCap): bool {
+        cap.is_exlusive
     }
 }

@@ -6,7 +6,6 @@ module syrup::orderbook {
     //! One can
     //! - create a new orderbook between a given collection and a bid token
     //!     (witness pattern protected);
-    //! - collect fees (witness pattern protected);
     //! - set publicly accessible actions to be witness protected;
     //! - open a new bid;
     //! - cancel an existing bid they own;
@@ -14,18 +13,18 @@ module syrup::orderbook {
     //! - cancel an existing NFT offer;
     //! - instantly buy an specific NFT.
 
-    // TODO: collect fees on trade
+    // TODO: collect commision on trade
+    // TODO: protocol toll
 
-    use syrup::err;
-    use std::fixed_point32::FixedPoint32;
     use std::vector;
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::object::{Self, ID, UID};
     use sui::transfer::transfer;
     use sui::tx_context::{Self, TxContext};
-    use syrup::crit_bit::{Self, CB as CBTree};
     use syrup::collection;
+    use syrup::crit_bit::{Self, CB as CBTree};
+    use syrup::err;
     use syrup::safe::{Self, Safe, TransferCap};
 
     /// A critbit order book implementation. Contains two ordered trees:
@@ -36,8 +35,6 @@ module syrup::orderbook {
         /// Actions which have a flag set to true can only be called via a
         /// witness protected implementation.
         protected_actions: WitnessProtectedActions,
-        /// Collects fees in fungible tokens.
-        fees: Fees<FT>,
         /// An ask order stores an NFT to be traded. The price associated with
         /// such an order is saying:
         ///
@@ -48,14 +45,6 @@ module syrup::orderbook {
         ///
         /// > for any NFT in this collection, I will spare this many tokens
         bids: CBTree<vector<Bid<FT>>>,
-    }
-
-    struct Fees<phantom FT> has store {
-        /// All fees during trading are collected here and the witness protected
-        /// method [`collect_fees`] is implemented by downstream packages.
-        uncollected: Balance<FT>,
-        /// in iterval `[0; 1)`
-        fee: FixedPoint32,
     }
 
     /// The contract which creates the orderbook can restrict specific actions
@@ -116,24 +105,25 @@ module syrup::orderbook {
     /// If the `price` is higher than the lowest ask requested price, then we
     /// execute a trade straight away. Otherwise we add the bid to the
     /// orderbook's state.
-    public entry fun create_bid<Wness, Col, FT>(
+    public entry fun create_bid<Wness, Col: key, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
-        // TODO: ask for Safe Or exlusive transfer cap
+        safe: &mut Safe<Col>, // !!!
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.create_bid, err::action_not_public());
-        create_bid_(book, price, wallet, ctx)
+        create_bid_(book, price, wallet, safe, ctx)
     }
-    public fun create_bid_protected<Wness: drop, Col, FT>(
+    public fun create_bid_protected<Wness: drop, Col: key, FT>(
         _witness: Wness,
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
+        safe: &mut Safe<Col>, // !!!
         ctx: &mut TxContext,
     ) {
-        create_bid_(book, price, wallet, ctx)
+        create_bid_(book, price, wallet, safe, ctx)
     }
 
     /// Cancel a bid owned by the sender at given price. If there are two bids
@@ -243,10 +233,9 @@ module syrup::orderbook {
     /// witness protected methods.
     public fun create<Wness: drop, Col: key, FT>(
         _witness: Wness,
-        fee: FixedPoint32,
         ctx: &mut TxContext,
     ): Orderbook<Wness, Col, FT> {
-        create_<Wness, Col, FT>(fee, no_protection(), ctx)
+        create_<Wness, Col, FT>(no_protection(), ctx)
     }
 
     public fun toggle_protection_on_buy_nft<Wness: drop, Col, FT>(
@@ -285,15 +274,6 @@ module syrup::orderbook {
             !book.protected_actions.create_bid;
     }
 
-    /// The contract which instantiated the OB implements logic for distibuting
-    /// the fee based on its requirements.
-    public fun fees_balance<Wness: drop, Col, FT>(
-        _witness: Wness,
-        orderbook: &mut Orderbook<Wness, Col, FT>,
-    ): &mut Balance<FT> {
-        fees_balance_(orderbook)
-    }
-
     public fun borrow_bids<Wness, Col, FT>(
         book: &Orderbook<Wness, Col, FT>,
     ): &CBTree<vector<Bid<FT>>> {
@@ -327,35 +307,24 @@ module syrup::orderbook {
     }
 
     fun create_<Wness, Col: key, FT>(
-        fee: FixedPoint32,
         protected_actions: WitnessProtectedActions,
         ctx: &mut TxContext,
     ): Orderbook<Wness, Col, FT> {
         let id = object::new(ctx);
-        let fees = Fees {
-            uncollected: balance::zero(),
-            fee,
-        };
 
         Orderbook<Wness, Col, FT> {
             id,
-            fees,
             protected_actions,
             asks: crit_bit::empty(),
             bids: crit_bit::empty(),
         }
     }
 
-    fun fees_balance_<Wness, Col, FT>(
-        orderbook: &mut Orderbook<Wness, Col, FT>,
-    ): &mut Balance<FT> {
-        &mut orderbook.fees.uncollected
-    }
-
-    fun create_bid_<Wness, Col, FT>(
+    fun create_bid_<Wness, Col: key, FT>(
         book: &mut Orderbook<Wness, Col, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
+        safe: &mut Safe<Col>, // !!!
         ctx: &mut TxContext,
     ) {
         let buyer = tx_context::sender(ctx);
@@ -383,8 +352,17 @@ module syrup::orderbook {
                 vector::destroy_empty(crit_bit::pop(asks, lowest_ask_price));
             };
 
-            transfer(coin::from_balance(bid_offer, ctx), ask.owner);
-            transfer(ask, buyer);
+            let Ask {
+                id,
+                price: _,
+                owner: seller,
+                nft_cap,
+            } = ask;
+            assert!(safe::safe_owner(safe) == seller, 0);
+            let trade = collection::begin_nft_trade_with(bid_offer, ctx);
+            let nft = safe::trade_nft<Wness, Col, FT>(nft_cap, trade, safe);
+            transfer(nft, buyer);
+            object::delete(id);
         } else {
             let order = Bid { offer: bid_offer, owner: buyer };
 
@@ -453,13 +431,17 @@ module syrup::orderbook {
             object::id(safe) == safe::transfer_cap_safe_id(&nft_cap),
             err::nft_collection_mismatch(),
         );
+        assert!(
+            safe::transfer_cap_is_exclusive(&nft_cap),
+            err::nft_not_exclusive(),
+        );
 
         let seller = tx_context::sender(ctx);
 
         let bids = &mut book.bids;
 
         let can_be_filled = !crit_bit::is_empty(bids) &&
-            crit_bit::max_key(bids) <= price;
+            crit_bit::max_key(bids) >= price;
 
         if (can_be_filled) {
             let highest_bid_price = crit_bit::max_key(bids);
@@ -480,7 +462,7 @@ module syrup::orderbook {
                 offer: bid_offer,
             } = bid;
             let trade = collection::begin_nft_trade_with(bid_offer, ctx);
-            let nft = safe::trade_nft<Col, FT>(nft_cap, trade, safe);
+            let nft = safe::trade_nft<Wness, Col, FT>(nft_cap, trade, safe);
             transfer(nft, buyer);
         } else {
             let id = object::new(ctx);
@@ -556,7 +538,7 @@ module syrup::orderbook {
         let offer = balance::split(coin::balance_mut(wallet), price);
 
         let trade = collection::begin_nft_trade_with(offer, ctx);
-        let nft = safe::trade_nft<Col, FT>(nft_cap, trade, safe);
+        let nft = safe::trade_nft<Wness, Col, FT>(nft_cap, trade, safe);
         transfer(nft, buyer);
     }
 
