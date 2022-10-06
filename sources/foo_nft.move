@@ -11,7 +11,7 @@ module liquidity_layer::foo_nft {
         // ...
     }
 
-    public fun collect_fees<FT>(
+    public fun collect_royalty<FT>(
         _receipt: TradeReceipt<Witness>,
         _payment: TradePayment<FT>,
         _safe: &mut Safe<Foo>,
