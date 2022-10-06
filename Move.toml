@@ -7,4 +7,3 @@ Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-fram
 
 [addresses]
 liquidity_layer = "0x0"
-# nft_protocol = "0xe6d6f01725d469b7b04d9905e6b3151e8c4264cb"
