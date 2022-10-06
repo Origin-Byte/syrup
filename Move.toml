@@ -3,7 +3,7 @@ name = "Syrup"
 version = "0.4.0"
 
 [dependencies]
-NftProtocol = { git = "https://github.com/Origin-Byte/nft-protocol", rev = "v0.0.4" }
+NftProtocol = { git = "https://github.com/Origin-Byte/nft-protocol", rev = "0.4.0" }
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework", rev = "devnet-0.10.0" }
 
 [addresses]
