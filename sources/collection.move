@@ -11,11 +11,6 @@ module liquidity_layer::collection {
         id: UID,
     }
 
-    /// Proof that the given NFT is one of the limited `total_supply` NFT's in `Collection`
-    struct CollectionProof has store {
-        collection_id: ID
-    }
-
     struct TradeReceipt<phantom Wness> has key, store {
         id: UID,
     }

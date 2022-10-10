@@ -29,8 +29,12 @@ module liquidity_layer::safe {
         id: UID,
         safe_id: ID,
         nft_id: ID,
-        // only one transfer cap for this nft can exist if this is true
-        is_exlusive: bool,
+    }
+
+    struct ExclusiveTransferCap has key, store {
+        id: UID,
+        safe_id: ID,
+        nft_id: ID,
     }
 
     /// Produce a `TransferCap` for the NFT with `id` in `safe`.
@@ -40,7 +44,7 @@ module liquidity_layer::safe {
     }
 
     public fun trade_nft<Wness, T, FT>(
-        _cap: TransferCap,
+        _cap: ExclusiveTransferCap,
         trade: TradeReceipt<Wness>,
         safe: &mut Safe<T>,
     ): T {
@@ -53,15 +57,11 @@ module liquidity_layer::safe {
         safe.owner
     }
 
-    public fun transfer_cap_safe_id(cap: &TransferCap): ID {
+    public fun exclusive_transfer_cap_safe_id(cap: &ExclusiveTransferCap): ID {
         cap.safe_id
     }
 
-    public fun transfer_cap_nft_id(cap: &TransferCap): ID {
+    public fun exclusive_transfer_cap_nft_id(cap: &ExclusiveTransferCap): ID {
         cap.nft_id
-    }
-
-    public fun transfer_cap_is_exclusive(cap: &TransferCap): bool {
-        cap.is_exlusive
     }
 }
