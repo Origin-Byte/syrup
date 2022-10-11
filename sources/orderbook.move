@@ -347,7 +347,7 @@ module liquidity_layer::orderbook {
     /// That's because we don't know the `Safe` ID up front in OB.
     /// Therefore, the tx creates `TradeIntermediate` which then has to be
     /// permission-lessly resolved via this endpoint.
-    public fun finish_trade<W, C: key + store, FT>(
+    public entry fun finish_trade<W, C: key + store, FT>(
         trade: &mut TradeIntermediate<W, FT>,
         safe: &mut Safe<C>,
         ctx: &mut TxContext,
