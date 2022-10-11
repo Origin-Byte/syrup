@@ -6,7 +6,7 @@
 module liquidity_layer::safe {
     use sui::object::{ID, UID};
     use sui::transfer::transfer_to_object;
-    use liquidity_layer::collection::{TradeReceipt};
+    use liquidity_layer::collection::{Self, TradeReceipt};
 
     /// A shared object for storing NFT's of type `T`, owned by the holder of a unique `OwnerCap`.
     /// Permissions to allow others to list NFT's can be granted via TransferCap's and BorrowCap's
@@ -50,6 +50,12 @@ module liquidity_layer::safe {
         trade: TradeReceipt<W>,
         safe: &mut Safe<T>,
     ): T {
+        // we cannot know whether the trade payment was honest or whether there
+        // was a side payment, but at least we know that the payment was
+        // considered and therefore if a contract wanted to avoid royalties,
+        // they'd have to be _explicitly_ malicious
+        assert!(collection::has_some_nft_payment(&trade), 0);
+
         transfer_to_object(trade, safe);
 
         abort(0)

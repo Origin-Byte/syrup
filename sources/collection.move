@@ -22,6 +22,10 @@ module liquidity_layer::collection {
     ///
     /// `TradeCap` also serves as a bridge between the `Collection` and the
     /// witness (outside of the `Collection` type.)
+    ///
+    /// TBD: Should we implement recovability? It would compilate the design
+    /// because we would have to work with a shared object that would have to
+    /// be included in every call.
     struct TradeCap<phantom W, phantom C> has key, store {
         id: UID,
     }
@@ -76,5 +80,9 @@ module liquidity_layer::collection {
         // TODO: wait for feature which enables us to reach child objects via
         // id
         abort(0)
+    }
+
+    public fun has_some_nft_payment<W>(trade: &TradeReceipt<W>): bool {
+        !vector::is_empty(&trade.payments)
     }
 }
