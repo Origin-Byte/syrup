@@ -4,19 +4,18 @@ module liquidity_layer::orderbook {
     //! An ask is one NFT with a min price condition.
     //!
     //! One can
-    //! - create a new orderbook between a given collection and a bid token
-    //!     (witness pattern protected);
+    //! - create a new orderbook between a given collection and a bid token;
     //! - set publicly accessible actions to be witness protected;
     //! - open a new bid;
     //! - cancel an existing bid they own;
     //! - offer an NFT if collection matches OB collection;
     //! - cancel an existing NFT offer;
-    //! - instantly buy an specific NFT;
+    //! - instantly buy a specific NFT;
     //! - open bids and asks with a commission on behalf of a user.
 
     // TODO: protocol toll
 
-    use liquidity_layer::collection::{Self, TradeReceipt};
+    use liquidity_layer::collection::{Self, TradeReceipt, TradeCap};
     use liquidity_layer::crit_bit::{Self, CB as CBTree};
     use liquidity_layer::err;
     use liquidity_layer::safe::{Self, Safe, ExclusiveTransferCap};
@@ -31,8 +30,11 @@ module liquidity_layer::orderbook {
     /// A critbit order book implementation. Contains two ordered trees:
     /// 1. bids ASC
     /// 2. asks DESC
-    struct Orderbook<phantom W, phantom Col, phantom FT> has key {
+    struct Orderbook<phantom W, phantom C, phantom FT> has key {
         id: UID,
+        /// Given off by the collection creator to allow trading of the
+        /// collection in orderbook.
+        trade_cap: TradeCap<W, C>,
         /// Actions which have a flag set to true can only be called via a
         /// witness protected implementation.
         protected_actions: WitnessProtectedActions,
@@ -137,7 +139,16 @@ module liquidity_layer::orderbook {
     /// permissionlessly.
     struct TradeIntermediate<phantom W, phantom FT> has key {
         id: UID,
+        /// in option bcs we want to extract it but cannot destroy shared obj
+        /// in Sui yet
+        ///
+        /// https://github.com/MystenLabs/sui/issues/2083
         nft_cap: Option<ExclusiveTransferCap>,
+        /// in option bcs we want to extract it but cannot destroy shared obj
+        /// in Sui yet
+        ///
+        /// https://github.com/MystenLabs/sui/issues/2083
+        trade_receipt: Option<TradeReceipt<W>>,
         buyer: address,
         paid: Balance<FT>,
         commission: Option<AskCommission>,
@@ -150,8 +161,8 @@ module liquidity_layer::orderbook {
     /// If the `price` is higher than the lowest ask requested price, then we
     /// execute a trade straight away. Otherwise we add the bid to the
     /// orderbook's state.
-    public entry fun create_bid<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun create_bid<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -159,17 +170,17 @@ module liquidity_layer::orderbook {
         assert!(book.protected_actions.create_bid, err::action_not_public());
         create_bid_(book, price, option::none(), wallet, ctx)
     }
-    public fun create_bid_protected<W: drop, Col: key + store, FT>(
+    public fun create_bid_protected<W: drop, C: key + store, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
     ) {
         create_bid_(book, price, option::none(), wallet, ctx)
     }
-    public entry fun create_bid_with_commission<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun create_bid_with_commission<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         beneficiary: address,
         commission_ft: u64,
@@ -183,9 +194,9 @@ module liquidity_layer::orderbook {
         };
         create_bid_(book, price, option::some(commission), wallet, ctx)
     }
-    public fun create_bid_with_commission_protected<W: drop, Col: key + store, FT>(
+    public fun create_bid_with_commission_protected<W: drop, C: key + store, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         beneficiary: address,
         commission_ft: u64,
@@ -201,8 +212,8 @@ module liquidity_layer::orderbook {
 
     /// Cancel a bid owned by the sender at given price. If there are two bids
     /// with the same price, the one created later is cancelled.
-    public entry fun cancel_bid<W, Col, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun cancel_bid<W, C, FT>(
+        book: &mut Orderbook<W, C, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -210,9 +221,9 @@ module liquidity_layer::orderbook {
         assert!(book.protected_actions.cancel_bid, err::action_not_public());
         cancel_bid_(book, requested_bid_offer_to_cancel, wallet, ctx)
     }
-    public fun cancel_bid_protected<W: drop, Col, FT>(
+    public fun cancel_bid_protected<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -224,31 +235,31 @@ module liquidity_layer::orderbook {
     /// there exists a bid with higher offer than `requsted_tokens`, then trade
     /// is immeidately executed. Otherwise the NFT is transferred to a newly
     /// created ask object and the object is inserted to the orderbook.
-    public entry fun create_ask<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun create_ask<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         requsted_tokens: u64,
         nft_cap: ExclusiveTransferCap,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.create_ask, err::action_not_public());
         create_ask_(book, requsted_tokens, option::none(), nft_cap, safe, ctx)
     }
-    public fun create_ask_protected<W: drop, Col: key + store, FT>(
+    public fun create_ask_protected<W: drop, C: key + store, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         requsted_tokens: u64,
         nft_cap: ExclusiveTransferCap,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         create_ask_(book, requsted_tokens, option::none(), nft_cap, safe, ctx)
     }
-    public entry fun create_ask_with_commission<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun create_ask_with_commission<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         requsted_tokens: u64,
         nft_cap: ExclusiveTransferCap,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         beneficiary: address,
         commission: u64,
         ctx: &mut TxContext,
@@ -262,12 +273,12 @@ module liquidity_layer::orderbook {
             book, requsted_tokens, option::some(commission), nft_cap, safe, ctx
         )
     }
-    public fun create_ask_with_commission_protected<W: drop, Col: key + store, FT>(
+    public fun create_ask_with_commission_protected<W: drop, C: key + store, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         requsted_tokens: u64,
         nft_cap: ExclusiveTransferCap,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         beneficiary: address,
         commission: u64,
         ctx: &mut TxContext,
@@ -286,8 +297,8 @@ module liquidity_layer::orderbook {
     ///
     /// This API might be improved in future as we use a different data
     /// structure for the orderbook.
-    public entry fun cancel_ask<W, Col, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun cancel_ask<W, C, FT>(
+        book: &mut Orderbook<W, C, FT>,
         nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -295,9 +306,9 @@ module liquidity_layer::orderbook {
         assert!(book.protected_actions.cancel_ask, err::action_not_public());
         cancel_ask_(book, nft_price, nft_id, ctx)
     }
-    public entry fun cancel_ask_protected<W: drop, Col, FT>(
+    public entry fun cancel_ask_protected<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -308,27 +319,40 @@ module liquidity_layer::orderbook {
     /// Buys a specific NFT from the orderbook. This is an atypical OB API as
     /// with fungible tokens, you just want to get the cheapest ask.
     /// However, with NFTs, you might want to get a specific one.
-    public entry fun buy_nft<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    public entry fun buy_nft<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         assert!(book.protected_actions.buy_nft, err::action_not_public());
         buy_nft_(book, nft_id, price, wallet, safe, ctx)
     }
-    public entry fun buy_nft_protected<W: drop, Col: key + store, FT>(
+    public entry fun buy_nft_protected<W: drop, C: key + store, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         buy_nft_(book, nft_id, price, wallet, safe, ctx)
+    }
+
+    /// When a bid is created and there's an ask with a lower price, then the
+    /// trade cannot be resolved immiedately.
+    /// That's because we don't know the `Safe` ID up front in OB.
+    /// Therefore, the tx creates `TradeIntermediate` which then has to be
+    /// permission-lessly resolved via this endpoint.
+    public fun finish_trade<W, C: key + store, FT>(
+        trade: &mut TradeIntermediate<W, FT>,
+        safe: &mut Safe<C>,
+        ctx: &mut TxContext,
+    ) {
+        finish_trade_(trade, safe, ctx)
     }
 
     /// `C`ollection kind of NFTs to be traded, and `F`ungible `T`oken to be
@@ -340,64 +364,59 @@ module liquidity_layer::orderbook {
     /// To implement specific logic in your smart contract, you can toggle the
     /// protection on specific actions. That will make them only accessible via
     /// witness protected methods.
-    public fun create<W: drop, Col: key, FT>(
-        _witness: W,
-        ctx: &mut TxContext,
-    ): Orderbook<W, Col, FT> {
-        create_<W, Col, FT>(no_protection(), ctx)
-    }
-
-    /// When a bid is created and there's an ask with a lower price, then the
-    /// trade cannot be resolved immiedately.
-    /// That's because we don't know the `Safe` ID up front in OB.
-    /// Therefore, the tx creates `TradeIntermediate` which then has to be
-    /// permission-lessly resolved via this endpoint.
-    public fun finish_trade<W, Col: key + store, FT>(
-        trade: &mut TradeIntermediate<W, FT>,
-        safe: &mut Safe<Col>,
+    public entry fun create<W, C: key, FT>(
+        trade_cap: TradeCap<W, C>,
         ctx: &mut TxContext,
     ) {
-        finish_trade_(trade, safe, ctx)
+        let ob = create_<W, C, FT>(no_protection(), trade_cap, ctx);
+        share_object(ob);
+    }
+    public fun create_protected<W: drop, C: key, FT>(
+        _witness: W,
+        trade_cap: TradeCap<W, C>,
+        ctx: &mut TxContext,
+    ): Orderbook<W, C, FT> {
+        create_<W, C, FT>(no_protection(), trade_cap, ctx)
     }
 
-    public fun toggle_protection_on_buy_nft<W: drop, Col, FT>(
+    public fun toggle_protection_on_buy_nft<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
     ) {
         book.protected_actions.buy_nft =
             !book.protected_actions.buy_nft;
     }
-    public fun toggle_protection_on_cancel_ask<W: drop, Col, FT>(
+    public fun toggle_protection_on_cancel_ask<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
     ) {
         book.protected_actions.cancel_ask =
             !book.protected_actions.cancel_ask;
     }
-    public fun toggle_protection_on_cancel_bid<W: drop, Col, FT>(
+    public fun toggle_protection_on_cancel_bid<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
     ) {
         book.protected_actions.cancel_bid =
             !book.protected_actions.cancel_bid;
     }
-    public fun toggle_protection_on_create_ask<W: drop, Col, FT>(
+    public fun toggle_protection_on_create_ask<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
     ) {
         book.protected_actions.create_ask =
             !book.protected_actions.create_ask;
     }
-    public fun toggle_protection_on_create_bid<W: drop, Col, FT>(
+    public fun toggle_protection_on_create_bid<W: drop, C, FT>(
         _witness: W,
-        book: &mut Orderbook<W, Col, FT>,
+        book: &mut Orderbook<W, C, FT>,
     ) {
         book.protected_actions.create_bid =
             !book.protected_actions.create_bid;
     }
 
-    public fun borrow_bids<W, Col, FT>(
-        book: &Orderbook<W, Col, FT>,
+    public fun borrow_bids<W, C, FT>(
+        book: &Orderbook<W, C, FT>,
     ): &CBTree<vector<Bid<FT>>> {
         &book.bids
     }
@@ -410,8 +429,8 @@ module liquidity_layer::orderbook {
         bid.owner
     }
 
-    public fun borrow_asks<W, Col, FT>(
-        book: &Orderbook<W, Col, FT>,
+    public fun borrow_asks<W, C, FT>(
+        book: &Orderbook<W, C, FT>,
     ): &CBTree<vector<Ask>> {
         &book.asks
     }
@@ -428,22 +447,24 @@ module liquidity_layer::orderbook {
         ask.owner
     }
 
-    fun create_<W, Col: key, FT>(
+    fun create_<W, C: key, FT>(
         protected_actions: WitnessProtectedActions,
+        trade_cap: TradeCap<W, C>,
         ctx: &mut TxContext,
-    ): Orderbook<W, Col, FT> {
+    ): Orderbook<W, C, FT> {
         let id = object::new(ctx);
 
-        Orderbook<W, Col, FT> {
+        Orderbook<W, C, FT> {
             id,
+            trade_cap,
             protected_actions,
             asks: crit_bit::empty(),
             bids: crit_bit::empty(),
         }
     }
 
-    fun create_bid_<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    fun create_bid_<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         bid_commission: Option<BidCommission<FT>>,
         wallet: &mut Coin<FT>,
@@ -490,6 +511,10 @@ module liquidity_layer::orderbook {
                 nft_cap: option::some(nft_cap),
                 commission: ask_commission,
                 buyer,
+                trade_receipt: option::some(collection::begin_nft_trade(
+                    &mut book.trade_cap,
+                    ctx,
+                )),
                 paid: bid_offer,
             });
 
@@ -516,8 +541,8 @@ module liquidity_layer::orderbook {
         }
     }
 
-    fun cancel_bid_<W, Col, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    fun cancel_bid_<W, C, FT>(
+        book: &mut Orderbook<W, C, FT>,
         requested_bid_offer_to_cancel: u64,
         wallet: &mut Coin<FT>,
         ctx: &mut TxContext,
@@ -566,12 +591,12 @@ module liquidity_layer::orderbook {
         option::destroy_none(commission);
     }
 
-    fun create_ask_<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    fun create_ask_<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         price: u64,
         ask_commission: Option<AskCommission>,
         nft_cap: ExclusiveTransferCap,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         assert!(
@@ -606,7 +631,9 @@ module liquidity_layer::orderbook {
                 commission: bid_commission,
             } = bid;
 
-            let trade = create_nft_trade_receipt(
+            let trade = collection::begin_nft_trade(&mut book.trade_cap, ctx);
+            pay_for_nft(
+                &mut trade,
                 &mut bid_offer,
                 buyer,
                 &mut ask_commission,
@@ -615,7 +642,7 @@ module liquidity_layer::orderbook {
             option::destroy_none(ask_commission);
             balance::destroy_zero(bid_offer);
 
-            let nft = safe::trade_nft<W, Col, FT>(nft_cap, trade, safe);
+            let nft = safe::trade_nft<W, C, FT>(nft_cap, trade, safe);
             transfer(nft, buyer);
 
             transfer_bid_commission(bid_commission, ctx);
@@ -644,8 +671,8 @@ module liquidity_layer::orderbook {
         }
     }
 
-    fun cancel_ask_<W, Col, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    fun cancel_ask_<W, C, FT>(
+        book: &mut Orderbook<W, C, FT>,
         nft_price: u64,
         nft_id: ID,
         ctx: &mut TxContext,
@@ -670,12 +697,12 @@ module liquidity_layer::orderbook {
         transfer(nft_cap, sender);
     }
 
-    fun buy_nft_<W, Col: key + store, FT>(
-        book: &mut Orderbook<W, Col, FT>,
+    fun buy_nft_<W, C: key + store, FT>(
+        book: &mut Orderbook<W, C, FT>,
         nft_id: ID,
         price: u64,
         wallet: &mut Coin<FT>,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         let buyer = tx_context::sender(ctx);
@@ -695,7 +722,9 @@ module liquidity_layer::orderbook {
 
         let bid_offer = balance::split(coin::balance_mut(wallet), price);
 
-        let trade = create_nft_trade_receipt(
+        let trade = collection::begin_nft_trade(&mut book.trade_cap, ctx);
+        pay_for_nft(
+            &mut trade,
             &mut bid_offer,
             buyer,
             &mut maybe_commission,
@@ -704,23 +733,25 @@ module liquidity_layer::orderbook {
         option::destroy_none(maybe_commission);
         balance::destroy_zero(bid_offer);
 
-        let nft = safe::trade_nft<W, Col, FT>(nft_cap, trade, safe);
+        let nft = safe::trade_nft<W, C, FT>(nft_cap, trade, safe);
         transfer(nft, buyer);
     }
 
-    fun finish_trade_<W, Col: key + store, FT>(
+    fun finish_trade_<W, C: key + store, FT>(
         trade: &mut TradeIntermediate<W, FT>,
-        safe: &mut Safe<Col>,
+        safe: &mut Safe<C>,
         ctx: &mut TxContext,
     ) {
         let TradeIntermediate {
             id: _,
             nft_cap,
+            trade_receipt,
             paid,
             buyer,
-            commission: maybe_commission
+            commission: maybe_commission,
         } = trade;
 
+        let trade = option::extract(trade_receipt);
         let nft_cap = option::extract(nft_cap);
 
         assert!(
@@ -728,14 +759,15 @@ module liquidity_layer::orderbook {
             err::nft_collection_mismatch(),
         );
 
-        let trade = create_nft_trade_receipt(
+        pay_for_nft(
+            &mut trade,
             paid,
             *buyer,
             maybe_commission,
             ctx,
         );
 
-        let nft = safe::trade_nft<W, Col, FT>(nft_cap, trade, safe);
+        let nft = safe::trade_nft<W, C, FT>(nft_cap, trade, safe);
         transfer(nft, *buyer);
     }
 
@@ -766,15 +798,14 @@ module liquidity_layer::orderbook {
         vector::remove(price_level, index)
     }
 
-    fun create_nft_trade_receipt<W, FT>(
+    fun pay_for_nft<W, FT>(
+        trade: &mut TradeReceipt<W>,
         paid: &mut Balance<FT>,
         buyer: address,
         maybe_commission: &mut Option<AskCommission>,
         ctx: &mut TxContext,
-    ): TradeReceipt<W> {
+    ) {
         let amount = balance::value(paid);
-
-        let trade = collection::begin_nft_trade(ctx);
 
         if (option::is_some(maybe_commission)) {
             // the `p`aid amount for the NFT and the commission `c`ut
@@ -784,15 +815,15 @@ module liquidity_layer::orderbook {
             } = option::extract(maybe_commission);
 
             // `p` - `c` goes to seller
-            collection::pay_for_nft(
-                &mut trade,
+            collection::add_nft_payment(
+                trade,
                 balance::split(paid, amount - cut),
                 buyer,
                 ctx,
             );
             // `c` goes to the marketplace
-            collection::pay_for_nft(
-                &mut trade,
+            collection::add_nft_payment(
+                trade,
                 balance::split(paid, cut),
                 beneficiary,
                 ctx,
@@ -800,15 +831,13 @@ module liquidity_layer::orderbook {
         } else {
             // no commission, all `p` goes to seller
 
-            collection::pay_for_nft(
-                &mut trade,
+            collection::add_nft_payment(
+                trade,
                 balance::split(paid, amount),
                 buyer,
                 ctx,
             );
         };
-
-        trade
     }
 
     fun transfer_bid_commission<FT>(

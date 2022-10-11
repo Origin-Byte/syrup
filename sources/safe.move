@@ -1,5 +1,7 @@
 //! Taken from https://github.com/MystenLabs/sui/pull/4887/files#diff-96b0dc07cabd79292618c993cd473c43ca81cd2f742266014967cdea1a7c6186
 //! and modified.
+//!
+//! This will eventually be part of a different package.
 
 module liquidity_layer::safe {
     use sui::object::{ID, UID};

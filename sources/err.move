@@ -23,8 +23,4 @@ module liquidity_layer::err {
     public fun action_not_public(): u64 {
         return Prefix + 04
     }
-
-    public fun nft_not_exclusive(): u64 {
-        return Prefix + 05
-    }
 }
