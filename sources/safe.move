@@ -43,9 +43,9 @@ module liquidity_layer::safe {
         abort(0)
     }
 
-    public fun trade_nft<Wness, T, FT>(
+    public fun trade_nft<W, T, FT>(
         _cap: ExclusiveTransferCap,
-        trade: TradeReceipt<Wness>,
+        trade: TradeReceipt<W>,
         safe: &mut Safe<T>,
     ): T {
         transfer_to_object(trade, safe);
