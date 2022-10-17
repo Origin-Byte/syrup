@@ -6,11 +6,11 @@
 module liquidity_layer::safe {
     use sui::object::{ID, UID};
     use sui::transfer::transfer_to_object;
-    use liquidity_layer::collection::{Self, TradeReceipt};
+    use liquidity_layer::collection::{Self, TradeReceipt, TradingWhitelist};
 
     /// A shared object for storing NFT's of type `T`, owned by the holder of a unique `OwnerCap`.
     /// Permissions to allow others to list NFT's can be granted via TransferCap's and BorrowCap's
-    struct Safe<phantom T> has key {
+    struct Safe<phantom C> has key {
         id: UID,
         owner: address,
         // ... contains the fields from MR
@@ -33,6 +33,8 @@ module liquidity_layer::safe {
         nft_id: ID,
     }
 
+    // TODO: should this be a separate type? it's more explicit, but need to
+    // duplicate fns. we could also have it as a flag on `TransferCap`
     struct ExclusiveTransferCap has key, store {
         id: UID,
         safe_id: ID,
@@ -45,16 +47,28 @@ module liquidity_layer::safe {
         abort(0)
     }
 
-    public fun trade_nft<W, T, FT>(
+    public fun trade_nft<W, C>(
+        _cap: TransferCap,
+        _trade: TradeReceipt<W>,
+        _whitelist: &TradingWhitelist<W, C>,
+        _safe: &mut Safe<C>,
+    ): C {
+        abort(0)
+    }
+
+    public fun trade_nft_exclusive<W, C>(
         _cap: ExclusiveTransferCap,
         trade: TradeReceipt<W>,
-        safe: &mut Safe<T>,
-    ): T {
+        whitelist: &TradingWhitelist<W, C>,
+        safe: &mut Safe<C>,
+    ): C {
         // we cannot know whether the trade payment was honest or whether there
         // was a side payment, but at least we know that the payment was
         // considered and therefore if a contract wanted to avoid royalties,
         // they'd have to be _explicitly_ malicious
         assert!(collection::has_some_nft_payment(&trade), 0);
+
+        assert!(collection::is_trade_source_whitelisted(&trade, whitelist), 0);
 
         transfer_to_object(trade, safe);
 
@@ -70,6 +84,14 @@ module liquidity_layer::safe {
     }
 
     public fun exclusive_transfer_cap_nft_id(cap: &ExclusiveTransferCap): ID {
+        cap.nft_id
+    }
+
+    public fun transfer_cap_safe_id(cap: &TransferCap): ID {
+        cap.safe_id
+    }
+
+    public fun transfer_cap_nft_id(cap: &TransferCap): ID {
         cap.nft_id
     }
 }

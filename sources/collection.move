@@ -5,33 +5,32 @@
 
 module liquidity_layer::collection {
     use sui::balance::Balance;
+    use sui::vec_set::{Self, VecSet};
     use std::vector;
     use sui::object::{Self, ID, UID};
     use sui::transfer::transfer_to_object;
     use sui::tx_context::TxContext;
+    use std::option::{Self, Option};
 
     struct Collection<phantom W, phantom T> has key, store {
         id: UID,
     }
 
-    /// Only owners of a trade cap are eligible to create `TradeReceipt`s.
-    ///
-    /// This enables optional whitelisting of trading contracts by creators.
-    /// Optional because creators can decide to mint this capability to anyone
-    /// who "asks" via a permission-less endpoint.
-    ///
-    /// `TradeCap` also serves as a bridge between the `Collection` and the
-    /// witness (outside of the `Collection` type.)
-    ///
-    /// TBD: Should we implement recovability? It would compilate the design
-    /// because we would have to work with a shared object that would have to
-    /// be included in every call.
-    struct TradeCap<phantom W, phantom C> has key, store {
+    struct TradingWhitelist<phantom W, phantom C> has key {
         id: UID,
+        authority: address,
+        /// If None, then there's no whitelist and everyone is allowed.
+        /// Otherwise the ID must be in the vec set.
+        ///
+        /// Then we assert that the source from `TradeReceipt` is included in
+        /// this set.
+        entities: Option<VecSet<ID>>,
     }
 
     struct TradeReceipt<phantom W> has key, store {
         id: UID,
+        /// ID of the source entity which began the trade.
+        source: ID,
         /// Each trade is done with one of more payments.
         ///
         /// IDs of `TradePayment` child objects of this receipt.
@@ -48,12 +47,19 @@ module liquidity_layer::collection {
     }
 
     /// Resolve the trade with [`safe::trade_nft`]
-    public fun begin_nft_trade<W, C>(
-        _cap: &mut TradeCap<W, C>,
+    ///
+    /// Settlement
+    ///
+    /// The assumption here is that getting a reference to a UID can be only
+    /// done from within the contract that created an entity. Therefore, this
+    /// is kind of similar to a witness pattern but works with UID instead.
+    public fun begin_nft_trade<W>(
+        source: &UID,
         ctx: &mut TxContext,
     ): TradeReceipt<W> {
         TradeReceipt {
             id: object::new(ctx),
+            source: object::uid_to_inner(source),
             payments: vector::empty(),
         }
     }
@@ -77,12 +83,25 @@ module liquidity_layer::collection {
         _witness: W,
         _trade: TradeReceipt<W>,
     ): TradePayment<FT> {
-        // TODO: wait for feature which enables us to reach child objects via
-        // id
+        // TODO: wait for feature which enables us to reach child objects
+        // dynamically https://github.com/MystenLabs/sui/issues/4203
         abort(0)
     }
 
     public fun has_some_nft_payment<W>(trade: &TradeReceipt<W>): bool {
         !vector::is_empty(&trade.payments)
+    }
+
+    public fun is_trade_source_whitelisted<W, C>(
+        trade: &TradeReceipt<W>,
+        whitelist: &TradingWhitelist<W, C>,
+    ): bool {
+        if (option::is_none(&whitelist.entities)) {
+            return true
+        };
+
+        let entities = option::borrow(&whitelist.entities);
+
+        vec_set::contains(entities, &trade.source)
     }
 }
