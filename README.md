@@ -1,5 +1,7 @@
 - Sui v0.9.0
 
+Working title: _syrup_ (to be changed)
+
 NFT liquidity layer is a suite of modules which aim to bring NFT trading across
 marketplaces to a single point, thereby concentrating the liquidity into a
 common interface.
@@ -18,16 +20,12 @@ An ask is one NFT with a min price condition.
 
 `Ask` is an object which is associated with a single NFT.
 When `Ask` is created, we transfer the ownership of the NFT to this
-new object.
-When an `Ask` is matched with a bid, we transfer the ownership of the
-`ask` object to the bid owner (buyer).
-The buyer can then claim the NFT via `claim_nft` endpoint.
+new object. To be more precise, we transfer the `safe::TransferCap`.
 
 One can:
 
 - create a new orderbook between a given collection and a BID token (witness
   pattern protected)
-- collect fees (witness pattern protected)
 - set publicly accessible actions to be witness protected
 - open a new BID
 - cancel an existing BID they own

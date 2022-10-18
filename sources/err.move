@@ -1,4 +1,4 @@
-module syrup::err {
+module liquidity_layer::err {
     //! Exports error functions. All errors in this smart contract have a prefix
     //! which distinguishes them from errors in other packages.
 

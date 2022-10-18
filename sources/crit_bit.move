@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copied from: https://github.com/econia-labs/econia/blob/main/src/move/econia/sources/CritBit.move
+// TODO: try again to use movemate
 
 /// # Module-level documentation sections
 ///
@@ -401,7 +402,7 @@
 ///
 /// ---
 ///
-module syrup::crit_bit {
+module liquidity_layer::crit_bit {
     use std::vector::{
         borrow as v_b,
         borrow_mut as v_b_m,
